@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile helpers
+        run: python -m compileall -q scripts tests
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Check skill structure
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          text = Path("SKILL.md").read_text(encoding="utf-8")
+          assert text.startswith("---\n")
+          frontmatter = text.split("---", 2)[1]
+          keys = set(re.findall(r"^([a-z_]+):", frontmatter, re.MULTILINE))
+          assert keys == {"name", "description"}, keys
+          assert Path("agents/openai.yaml").is_file()
+          assert "$gh-collaborate" in Path("agents/openai.yaml").read_text(encoding="utf-8")
+          PY

@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Collaboration"
+  short_description: "Plan, deliver, and hand off GitHub repository work"
+  default_prompt: "Use $gh-collaborate to take this repository task from Issue planning through a review-ready pull request."
