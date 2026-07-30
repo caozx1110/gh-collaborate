@@ -43,6 +43,28 @@ class RenderTests(unittest.TestCase):
                 rendered = render_work_item.render(template, values)
                 self.assertEqual(validate_work_item.validate(kind, rendered), [])
 
+    def test_issue_templates_render_markers_reconcilable_from_bodies(self):
+        for index, filename in enumerate(("epic.md", "atomic-issue.md"), start=1):
+            with self.subTest(template=filename):
+                marker = f"ghc:issue:create:{index}"
+                template = (ROOT / "assets" / "templates" / filename).read_text(encoding="utf-8")
+                values = {token: "none" for token in render_work_item.TOKEN.findall(template)}
+                values["OPERATION_MARKER"] = marker
+                rendered = render_work_item.render(template, values)
+                self.assertTrue(reconcile_state.has_exact_marker(rendered, marker))
+
+                pages = [{"items": [{
+                    "number": index,
+                    "html_url": f"https://example.test/issues/{index}",
+                    "body": rendered,
+                }]}]
+                with mock.patch.object(reconcile_state, "gh", return_value=(True, pages, "")):
+                    matches, errors = reconcile_state.reconcile_bodies(
+                        "owner/repo", "issue", marker
+                    )
+                self.assertEqual(errors, [])
+                self.assertEqual([match["number"] for match in matches], [index])
+
 
 class ValidateTests(unittest.TestCase):
     def test_detects_secret_local_path_and_placeholder(self):

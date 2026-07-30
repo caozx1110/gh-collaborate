@@ -1,3 +1,5 @@
+<!-- operation-marker: {{OPERATION_MARKER}} -->
+
 ## Problem and evidence
 
 {{PROBLEM_AND_EVIDENCE}}

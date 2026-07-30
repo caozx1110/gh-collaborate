@@ -1,3 +1,5 @@
+<!-- operation-marker: {{OPERATION_MARKER}} -->
+
 ## Final goal
 
 {{FINAL_GOAL}}
