@@ -16,13 +16,20 @@ REQUIRED = {
     "pr": ["Outcome", "references", "Scope", "Implementation", "Candidate", "validation", "Risks", "rollback", "Known limits"],
 }
 SECRET_PATTERNS = {
-    "GitHub token": re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
+    "GitHub token": re.compile(r"\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_.-]{20,}\b"),
     "private key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
     "generic secret assignment": re.compile(r"(?i)\b(?:api[_-]?key|access[_-]?token|password)\s*[:=]\s*[^\s]{8,}"),
 }
 LOCAL_PATH = re.compile(r"(?:^|[\s(`])(?:~/(?:\.[\w.-]+/)?|/(?:Users|home|private|tmp|var/folders)/)", re.MULTILINE)
-AUTO_CLOSE = re.compile(r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#\d+")
-FULL_SHA = re.compile(r"\b[0-9a-fA-F]{40}\b")
+AUTO_CLOSE = re.compile(
+    r"(?i)\b(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)"
+    r"(?:[ \t]*:[ \t]*|[ \t]+)"
+    r"(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#\d+\b"
+)
+CHECKPOINT_SHA_FIELD = re.compile(
+    r"(?im)^[ \t]*(?:[-*+][ \t]+)?Full remote SHA:[ \t]*(.*?)[ \t]*$"
+)
+CHECKPOINT_SHA_VALUE = re.compile(r"(?i)(?:[0-9a-f]{40}|`[0-9a-f]{40}`)")
 
 
 def validate(kind: str, text: str) -> list[dict[str, str]]:
@@ -38,8 +45,10 @@ def validate(kind: str, text: str) -> list[dict[str, str]]:
         findings.append({"severity": "error", "code": "local-path", "message": "machine-local path"})
     if kind == "pr" and AUTO_CLOSE.search(text):
         findings.append({"severity": "error", "code": "auto-close", "message": "use Refs unless repository policy requires auto-close"})
-    if kind == "checkpoint" and "none" not in lowered and not FULL_SHA.search(text):
-        findings.append({"severity": "error", "code": "full-sha", "message": "checkpoint requires a 40-character SHA"})
+    if kind == "checkpoint":
+        sha_values = CHECKPOINT_SHA_FIELD.findall(text)
+        if len(sha_values) != 1 or not CHECKPOINT_SHA_VALUE.fullmatch(sha_values[0]):
+            findings.append({"severity": "error", "code": "full-sha", "message": "Full remote SHA must contain exactly one 40-character SHA"})
     if "{{" in text or "}}" in text:
         findings.append({"severity": "error", "code": "placeholder", "message": "unresolved template placeholder"})
     return findings

@@ -21,6 +21,8 @@ After timeout, connection loss, interruption, or 5xx:
 3. Classify the result as `present`, `absent`, `conflict`, or `unknown`.
 4. Continue only for `present`; create once only for proven `absent`; stop for `conflict` or `unknown`.
 
+For a comment, bind reconciliation to the parent Issue/PR number and require an exact standalone operation marker. For a push, require the remote branch to equal the expected 40-character SHA; a same-name branch at another SHA is a conflict, not success.
+
 Do not infer absence from a single empty search when GitHub reads are degraded.
 
 ## High-risk escalation

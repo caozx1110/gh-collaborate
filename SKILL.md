@@ -65,7 +65,7 @@ Stop at human review. Do not approve your own work, impersonate a reviewer, bypa
 
 ## Reconcile every write
 
-After creating or updating an Issue, comment, branch, or PR, re-read it and verify identity and content. If a request times out or returns an ambiguous error, do not retry blindly. Run `python scripts/reconcile_state.py ...` or perform equivalent read-only searches using a unique operation marker, head branch, full SHA, and Issue/PR relation; then create only what is proven absent.
+After creating or updating an Issue, comment, branch, or PR, re-read it and verify identity and content. If a request times out or returns an ambiguous error, do not retry blindly. Reconcile a comment with `--kind comment --number <issue-or-pr> --marker <value>` and a push with `--kind branch --branch <name> --expected-sha <full-sha>`, or perform equivalent read-only checks; then create only what is proven absent.
 
 ## Preserve invariants
 

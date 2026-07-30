@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -55,6 +54,47 @@ class ValidateTests(unittest.TestCase):
         text = "Outcome references Scope Implementation Candidate validation Risks rollback Known limits\nFixes #12"
         codes = {item["code"] for item in validate_work_item.validate("pr", text)}
         self.assertIn("auto-close", codes)
+
+    def test_detects_fine_grained_github_pat(self):
+        text = "github_pat_" + "A" * 80
+        codes = {item["code"] for item in validate_work_item.validate("issue", text)}
+        self.assertIn("secret", codes)
+
+    def test_rejects_colon_and_cross_repo_auto_close_syntax(self):
+        base = "Outcome references Scope Implementation Candidate validation Risks rollback Known limits\n"
+        for syntax in ("Closes: #12", "CLOSES:#12", "Fixes owner/repo#12"):
+            with self.subTest(syntax=syntax):
+                codes = {item["code"] for item in validate_work_item.validate("pr", base + syntax)}
+                self.assertIn("auto-close", codes)
+        self.assertNotIn(
+            "auto-close",
+            {item["code"] for item in validate_work_item.validate("pr", base + "Refs #12")},
+        )
+
+    def test_checkpoint_sha_is_anchored_to_its_field(self):
+        text = """## Checkpoint
+Stage: ready
+Branch: agent/issue-2-v1
+Full remote SHA: deadbeef
+Validation: commit 0123456789abcdef0123456789abcdef01234567 passed
+Blocker: none
+Next action: open PR
+"""
+        codes = {item["code"] for item in validate_work_item.validate("checkpoint", text)}
+        self.assertIn("full-sha", codes)
+
+    def test_checkpoint_rejects_duplicate_sha_fields(self):
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        text = f"""## Checkpoint
+Stage: ready
+Branch: agent/issue-2-v1
+Full remote SHA: {sha}
+Full remote SHA: {sha}
+Validation: passed
+Next action: open PR
+"""
+        codes = {item["code"] for item in validate_work_item.validate("checkpoint", text)}
+        self.assertIn("full-sha", codes)
 
     def test_accepts_complete_checkpoint(self):
         text = """## Checkpoint
@@ -124,6 +164,42 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(reconcile_state.classify([{}], []), "present")
         self.assertEqual(reconcile_state.classify([{}, {}], []), "conflict")
         self.assertEqual(reconcile_state.classify([], ["offline"]), "unknown")
+
+    def test_issue_comment_uses_numbered_comments_endpoint_and_exact_marker(self):
+        marker = "ghc:2:candidate:fe33b18"
+        comments = [[
+            {"id": 10, "html_url": "https://example.test/10", "body": f"<!-- operation-marker: {marker}:other -->"},
+            {"id": 11, "html_url": "https://example.test/11", "body": f"<!-- operation-marker: {marker} -->"},
+        ]]
+        with mock.patch.object(reconcile_state, "gh", return_value=(True, comments, "")) as gh_mock:
+            matches, errors = reconcile_state.reconcile_comments("owner/repo", 2, marker)
+        gh_mock.assert_called_once_with([
+            "api", "--paginate", "--slurp", "-X", "GET",
+            "repos/owner/repo/issues/2/comments", "-f", "per_page=100",
+        ])
+        self.assertEqual(errors, [])
+        self.assertEqual([match["comment_id"] for match in matches], [11])
+
+    def test_branch_requires_expected_sha_match(self):
+        expected = "a" * 40
+        response = {"ref": "refs/heads/agent/issue-2-v1", "object": {"sha": "b" * 40}}
+        with mock.patch.object(reconcile_state, "gh", return_value=(True, response, "")):
+            matches, conflicts, errors = reconcile_state.reconcile_branch(
+                "owner/repo", "agent/issue-2-v1", expected
+            )
+        self.assertEqual(matches, [])
+        self.assertEqual(errors, [])
+        self.assertEqual(conflicts[0]["expected_sha"], expected)
+        self.assertEqual(conflicts[0]["actual_sha"], "b" * 40)
+
+        response["object"]["sha"] = expected
+        with mock.patch.object(reconcile_state, "gh", return_value=(True, response, "")):
+            matches, conflicts, errors = reconcile_state.reconcile_branch(
+                "owner/repo", "agent/issue-2-v1", expected
+            )
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(conflicts, [])
+        self.assertEqual(errors, [])
 
 
 class SkillPolicyTests(unittest.TestCase):
