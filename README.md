@@ -1,5 +1,7 @@
 # gh-collaborate
 
+English | [简体中文](README.zh-CN.md)
+
 `gh-collaborate` is an open-source Agent Skill for coordinating repository work through GitHub Issues, Git branches and worktrees, remote checkpoints, pull requests, Actions, human review, and post-merge closure.
 
 It is for people who want coding agents to leave an auditable, portable handoff in GitHub instead of relying on chat history, private memory, or unpushed local state. The authoritative Agent workflow lives in [SKILL.md](SKILL.md); this README is the human-facing introduction.
