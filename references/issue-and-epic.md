@@ -37,6 +37,7 @@ Do not begin implementation while the outcome, scope, acceptance criteria, impor
 Prefer append-only comments for checkpoints and handoffs. Edit the Issue body only when repository policy designates it as a maintained control record or the user explicitly requests the edit. Never erase human discussion or silently rewrite accepted scope.
 
 Use stable stages such as `draft`, `ready`, `in-progress`, `blocked`, `in-review`, `merged`, and `closed`. A local commit is not a shared checkpoint. Record only a pushed full SHA.
+The baseline is always a full SHA. Before the first pushed checkpoint, use the literal `none` for `Last remote SHA`; replace it with the pushed full SHA afterward.
 
 ## Handle scope change
 
