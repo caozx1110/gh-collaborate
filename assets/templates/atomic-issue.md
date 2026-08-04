@@ -22,6 +22,10 @@
 
 ## Dependencies and ownership
 
+- Risk class: {{RISK_CLASS}}
+- Risk triggers: {{RISK_TRIGGERS}}
+- Complexity estimate: {{COMPLEXITY_ESTIMATE}}
+
 {{DEPENDENCIES_AND_OWNERSHIP}}
 
 ## Risks, migration, and rollback
