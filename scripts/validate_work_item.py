@@ -286,18 +286,6 @@ def _find_backtick_close(
     return None
 
 
-def _find_html_comment_close(
-    lines: list[str], line_index: int, start: int
-) -> tuple[int, int] | None:
-    for index in range(line_index, len(lines)):
-        if index != line_index and _is_code_span_boundary(lines[index]):
-            return None
-        position = lines[index].find("-->", start if index == line_index else 0)
-        if position >= 0:
-            return index, position + 3
-    return None
-
-
 def _outside_multiline_code_spans(lines: list[str]) -> list[str]:
     outside: list[str] = []
     close_line = -1
@@ -507,10 +495,7 @@ def _has_inline_html_comment(text: str) -> bool:
             comment = line.find("<!--", cursor)
             tick_run = _backtick_run(line, cursor)
             if comment >= 0 and (tick_run is None or comment < tick_run[0]):
-                close = _find_html_comment_close(
-                    lines, line_index, comment + 4
-                )
-                if not _is_escaped(line, comment) and close is not None:
+                if not _is_escaped(line, comment):
                     return True
                 cursor = comment + 4
                 continue

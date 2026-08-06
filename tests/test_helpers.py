@@ -221,7 +221,11 @@ class ValidateTests(unittest.TestCase):
             "Escaped \\` literal <!--\n- Stage: ready\n-->\n` later literal",
             1,
         )
-        self.assertEqual(validate_work_item.validate("issue", escaped_tick), [])
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("issue", escaped_tick)
+        }
+        self.assertIn("raw-html", codes)
 
     def test_rejects_indented_sections_fields_and_fences(self):
         issue = rendered_work_item("issue")
@@ -608,6 +612,17 @@ class ValidateTests(unittest.TestCase):
                     for item in validate_work_item.validate("issue", hidden)
                 }
                 self.assertIn("missing-field", codes)
+
+        inline_comment = issue.replace(
+            screening,
+            f"Visible text <!--\n{screening}\n-->",
+            1,
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("issue", inline_comment)
+        }
+        self.assertIn("raw-html", codes)
 
         nested_only = issue.replace(screening, "", 1)
         nested_only = add_subsection(
