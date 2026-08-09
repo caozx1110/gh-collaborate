@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -47,10 +48,27 @@ def rendered_work_item(kind: str, **overrides: str) -> str:
             "VALIDATION": "unit tests passed",
             "BASE_EVIDENCE": f"main at {FULL_SHA}",
             "TESTS_AND_ACTIONS": "unit tests passed; Actions pending",
+            "RISK_CLASS": "ordinary",
+            "RISK_TRIGGERS": "none",
+            "COMPLEXITY_ESTIMATE": (
+                "production files=2; net production lines=80; new primitives=none"
+            ),
         }
     )
     values.update({key.upper(): value for key, value in overrides.items()})
     return render_work_item.render(template, values)
+
+
+def add_subsection(text: str, parent: str, title: str, content: str = "documented") -> str:
+    marker = f"## {parent}\n"
+    start = text.find(marker)
+    if start < 0:
+        raise AssertionError(f"missing parent section: {parent}")
+    end = text.find("\n## ", start + len(marker))
+    if end < 0:
+        end = len(text)
+    insertion = f"\n\n### {title}\n\n{content}"
+    return text[:end].rstrip() + insertion + "\n" + text[end:]
 
 
 class RenderTests(unittest.TestCase):
@@ -191,6 +209,13 @@ class ValidateTests(unittest.TestCase):
         }
         self.assertIn("missing-section", codes)
 
+        later_inline_code = issue.replace(
+            "## Problem and evidence\n\ndocumented",
+            "## Problem and evidence\n\nUnmatched ` delimiter",
+            1,
+        )
+        self.assertEqual(validate_work_item.validate("issue", later_inline_code), [])
+
         escaped_tick = issue.replace(
             "- Stage: ready",
             "Escaped \\` literal <!--\n- Stage: ready\n-->\n` later literal",
@@ -200,16 +225,22 @@ class ValidateTests(unittest.TestCase):
             item["code"]
             for item in validate_work_item.validate("issue", escaped_tick)
         }
-        self.assertIn("missing-field", codes)
+        self.assertIn("raw-html", codes)
 
-    def test_rejects_tab_indented_sections_fields_and_fences(self):
+    def test_rejects_indented_sections_fields_and_fences(self):
         issue = rendered_work_item("issue")
-        tabbed_heading = issue.replace("## Outcome", "\t## Outcome", 1)
-        codes = {
-            item["code"]
-            for item in validate_work_item.validate("issue", tabbed_heading)
-        }
-        self.assertIn("missing-section", codes)
+        for indentation in (" ", "  ", "   ", "\t"):
+            with self.subTest(indentation=repr(indentation)):
+                indented_heading = issue.replace(
+                    "## Outcome", f"{indentation}## Outcome", 1
+                )
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate(
+                        "issue", indented_heading
+                    )
+                }
+                self.assertIn("missing-section", codes)
 
         tabbed_field = issue.replace("- Stage: ready", "\t- Stage: ready", 1)
         codes = {
@@ -262,12 +293,493 @@ class ValidateTests(unittest.TestCase):
         self.assertIn("invalid-value", codes)
 
         self.assertEqual(
-            validate_work_item.validate("issue", rendered_work_item("issue", last_remote_sha="none")),
+            validate_work_item.validate(
+                "issue", rendered_work_item("issue", last_remote_sha="none")
+            ),
             [],
         )
-        invalid_remote = rendered_work_item("issue", last_remote_sha=f"{FULL_SHA} {FULL_SHA}")
-        codes = {item["code"] for item in validate_work_item.validate("issue", invalid_remote)}
+        invalid_remote = rendered_work_item(
+            "issue", last_remote_sha=f"{FULL_SHA} {FULL_SHA}"
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("issue", invalid_remote)
+        }
         self.assertIn("invalid-value", codes)
+
+    def test_issue_requires_screening_fields_in_dependencies_section(self):
+        issue = rendered_work_item("issue")
+        for field in ("Risk class", "Risk triggers", "Complexity estimate"):
+            with self.subTest(field=field):
+                missing = re.sub(rf"^- {re.escape(field)}:.*\n", "", issue, count=1, flags=re.MULTILINE)
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate("issue", missing)
+                }
+                self.assertIn("missing-field", codes)
+
+        duplicate = issue.replace(
+            "- Risk class: ordinary",
+            "- Risk class: ordinary\n- Risk class: ordinary",
+            1,
+        )
+        codes = {
+            item["code"] for item in validate_work_item.validate("issue", duplicate)
+        }
+        self.assertIn("duplicate-field", codes)
+
+        misplaced = issue.replace("- Risk class: ordinary\n", "", 1)
+        misplaced = misplaced.replace(
+            "## Outcome\n", "## Outcome\n\n- Risk class: ordinary\n", 1
+        )
+        codes = {
+            item["code"] for item in validate_work_item.validate("issue", misplaced)
+        }
+        self.assertIn("missing-field", codes)
+
+    def test_screening_rejects_invalid_class_trigger_and_complexity_syntax(self):
+        cases = (
+            ("risk_class", "routine"),
+            ("risk_triggers", "security,unknown"),
+            ("risk_triggers", "security,security"),
+            ("complexity_estimate", "2 files and 80 lines"),
+            (
+                "complexity_estimate",
+                "production files=-1; net production lines=80; new primitives=none",
+            ),
+            (
+                "complexity_estimate",
+                "production files=2; net production lines=80; new primitives=database",
+            ),
+            (
+                "complexity_estimate",
+                "production files=2; net production lines=80; new primitives=none; "
+                "budget override=none; production file budget=20; "
+                "net production line budget=1000",
+            ),
+            (
+                "complexity_estimate",
+                "production files=2; net production lines=80; new primitives=none; "
+                "budget override=policy; production file budget=20; "
+                "net production line budget=1000",
+            ),
+        )
+        for field, value in cases:
+            with self.subTest(field=field, value=value):
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate(
+                        "issue", rendered_work_item("issue", **{field: value})
+                    )
+                }
+                self.assertIn("invalid-value", codes)
+
+    def test_risk_class_and_triggers_are_consistent(self):
+        ordinary_with_trigger = rendered_work_item(
+            "issue", risk_class="ordinary", risk_triggers="security"
+        )
+        ordinary_with_trigger = add_subsection(
+            ordinary_with_trigger,
+            "Risks, migration, and rollback",
+            "Threat model",
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("issue", ordinary_with_trigger)
+        }
+        self.assertIn("invalid-risk-class", codes)
+
+        for risk_class in ("enhanced", "high"):
+            with self.subTest(risk_class=risk_class):
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate(
+                        "issue",
+                        rendered_work_item(
+                            "issue", risk_class=risk_class, risk_triggers="none"
+                        ),
+                    )
+                }
+                self.assertIn("invalid-risk-class", codes)
+
+    def test_default_budget_re_evaluates_without_forcing_decomposition(self):
+        at_limit = rendered_work_item(
+            "issue",
+            complexity_estimate=(
+                "production files=10; net production lines=500; new primitives=none"
+            ),
+        )
+        self.assertEqual(validate_work_item.validate("issue", at_limit), [])
+
+        for estimate in (
+            "production files=11; net production lines=500; new primitives=none",
+            "production files=10; net production lines=501; new primitives=none",
+        ):
+            with self.subTest(estimate=estimate):
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate(
+                        "issue",
+                        rendered_work_item("issue", complexity_estimate=estimate),
+                    )
+                }
+                self.assertIn("missing-risk-trigger", codes)
+                self.assertIn("invalid-risk-class", codes)
+
+        enhanced = rendered_work_item(
+            "issue",
+            risk_class="enhanced",
+            risk_triggers="budget",
+            complexity_estimate=(
+                "production files=11; net production lines=501; new primitives=none"
+            ),
+        )
+        enhanced = add_subsection(
+            enhanced,
+            "Design basis and approach",
+            "Scope and budget decision",
+        )
+        self.assertEqual(validate_work_item.validate("issue", enhanced), [])
+
+        overridden = rendered_work_item(
+            "issue",
+            complexity_estimate=(
+                "production files=12; net production lines=600; new primitives=none; "
+                "budget override=AGENTS.md#complexity; production file budget=20; "
+                "net production line budget=1000"
+            ),
+        )
+        self.assertEqual(validate_work_item.validate("issue", overridden), [])
+
+        lower_override = rendered_work_item(
+            "issue",
+            complexity_estimate=(
+                "production files=12; net production lines=600; new primitives=none; "
+                "budget override=AGENTS.md#complexity; production file budget=5; "
+                "net production line budget=100"
+            ),
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("issue", lower_override)
+        }
+        self.assertIn("missing-risk-trigger", codes)
+        self.assertIn("invalid-risk-class", codes)
+
+    def test_new_primitives_require_matching_trigger_and_material(self):
+        cases = (
+            ("storage", "persistence", "Risks, migration, and rollback", "Data invariants and recovery"),
+            ("transaction", "transaction", "Risks, migration, and rollback", "Data invariants and recovery"),
+            ("migration", "migration", "Risks, migration, and rollback", "Data invariants and recovery"),
+            ("concurrency", "concurrency", "Design basis and approach", "Concurrency model"),
+        )
+        for primitive, trigger, parent, title in cases:
+            estimate = (
+                f"production files=2; net production lines=80; new primitives={primitive}"
+            )
+            with self.subTest(primitive=primitive, error="missing-trigger"):
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate(
+                        "issue", rendered_work_item("issue", complexity_estimate=estimate)
+                    )
+                }
+                self.assertIn("missing-risk-trigger", codes)
+
+            issue = rendered_work_item(
+                "issue",
+                risk_class="enhanced",
+                risk_triggers=trigger,
+                complexity_estimate=estimate,
+            )
+            issue = add_subsection(issue, parent, title)
+            with self.subTest(primitive=primitive, result="valid"):
+                self.assertEqual(validate_work_item.validate("issue", issue), [])
+
+    def test_each_trigger_routes_only_its_matching_material(self):
+        for trigger, (parent, title) in validate_work_item.RISK_MATERIALS.items():
+            with self.subTest(trigger=trigger, result="missing"):
+                issue = rendered_work_item(
+                    "issue", risk_class="enhanced", risk_triggers=trigger
+                )
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate("issue", issue)
+                }
+                self.assertIn("missing-risk-material", codes)
+
+            with self.subTest(trigger=trigger, result="valid"):
+                issue = add_subsection(issue, parent, title)
+                self.assertEqual(validate_work_item.validate("issue", issue), [])
+
+    def test_risk_material_must_be_unique_nonempty_and_under_expected_parent(self):
+        issue = rendered_work_item(
+            "issue", risk_class="enhanced", risk_triggers="security"
+        )
+        empty = add_subsection(
+            issue, "Risks, migration, and rollback", "Additional context"
+        )
+        empty = add_subsection(
+            empty, "Risks, migration, and rollback", "Threat model", ""
+        )
+        codes = {
+            item["code"] for item in validate_work_item.validate("issue", empty)
+        }
+        self.assertIn("empty-risk-material", codes)
+
+        duplicate = add_subsection(
+            add_subsection(
+                issue, "Risks, migration, and rollback", "Threat model"
+            ),
+            "Risks, migration, and rollback",
+            "Threat model",
+        )
+        codes = {
+            item["code"] for item in validate_work_item.validate("issue", duplicate)
+        }
+        self.assertIn("duplicate-risk-material", codes)
+
+        misplaced = add_subsection(issue, "Design basis and approach", "Threat model")
+        codes = {
+            item["code"] for item in validate_work_item.validate("issue", misplaced)
+        }
+        self.assertIn("missing-risk-material", codes)
+
+        fenced = rendered_work_item(
+            "issue", risk_class="enhanced", risk_triggers="concurrency"
+        )
+        fenced = add_subsection(
+            fenced,
+            "Design basis and approach",
+            "Concurrency model",
+            "```text\n```",
+        )
+        codes = {
+            item["code"] for item in validate_work_item.validate("issue", fenced)
+        }
+        self.assertIn("empty-risk-material", codes)
+
+        nonempty_fence = rendered_work_item(
+            "issue", risk_class="enhanced", risk_triggers="concurrency"
+        )
+        nonempty_fence = add_subsection(
+            nonempty_fence,
+            "Design basis and approach",
+            "Concurrency model",
+            "```mermaid\nsequenceDiagram\n    A->>B: ordered handoff\n```",
+        )
+        self.assertEqual(validate_work_item.validate("issue", nonempty_fence), [])
+
+        for trigger, title in (
+            ("shared-paths", "Ownership and integration plan"),
+            ("decomposition", "Parent/child delivery plan"),
+        ):
+            with self.subTest(trigger=trigger, error="empty-material"):
+                empty_dependencies = rendered_work_item(
+                    "issue", risk_class="enhanced", risk_triggers=trigger
+                )
+                empty_dependencies = add_subsection(
+                    empty_dependencies,
+                    "Dependencies and ownership",
+                    title,
+                    "",
+                )
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate(
+                        "issue", empty_dependencies
+                    )
+                }
+                self.assertIn("empty-risk-material", codes)
+
+    def test_screening_fields_cannot_hide_in_code_or_nested_material(self):
+        issue = rendered_work_item("issue")
+        screening = (
+            "- Risk class: ordinary\n"
+            "- Risk triggers: none\n"
+            "- Complexity estimate: production files=2; net production lines=80; "
+            "new primitives=none"
+        )
+        for replacement in (
+            screening.replace("- ", ""),
+            screening.replace("- ", "* "),
+            "\n".join(f"`{line}`" for line in screening.splitlines()),
+        ):
+            with self.subTest(replacement=replacement.splitlines()[0]):
+                hidden = issue.replace(screening, replacement, 1)
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate("issue", hidden)
+                }
+                self.assertIn("missing-field", codes)
+
+        inline_comment = issue.replace(
+            screening,
+            f"Visible text <!--\n{screening}\n-->",
+            1,
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("issue", inline_comment)
+        }
+        self.assertIn("raw-html", codes)
+
+        nested_only = issue.replace(screening, "", 1)
+        nested_only = add_subsection(
+            nested_only,
+            "Dependencies and ownership",
+            "Parent/child delivery plan",
+            screening,
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("issue", nested_only)
+        }
+        self.assertIn("missing-field", codes)
+
+        nested_child = rendered_work_item(
+            "issue", risk_class="enhanced", risk_triggers="decomposition"
+        )
+        nested_child = add_subsection(
+            nested_child,
+            "Dependencies and ownership",
+            "Parent/child delivery plan",
+            "Child #12 delta:\n- Risk class: ordinary\n- Risk triggers: none\n"
+            "- Complexity estimate: production files=1; net production lines=20; "
+            "new primitives=none",
+        )
+        self.assertEqual(validate_work_item.validate("issue", nested_child), [])
+
+    def test_raw_html_cannot_supply_required_risk_material(self):
+        issue = rendered_work_item(
+            "issue", risk_class="enhanced", risk_triggers="concurrency"
+        )
+        issue = add_subsection(
+            issue, "Design basis and approach", "Concurrency model"
+        )
+        for opener in (
+            "<div>",
+            '<x title=">">',
+            "</script>",
+            "<!DOCTYPE html>",
+        ):
+            with self.subTest(opener=opener):
+                hidden = issue.replace(
+                    "### Concurrency model\n\ndocumented",
+                    f"{opener}\n### Concurrency model\ndocumented",
+                    1,
+                )
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate("issue", hidden)
+                }
+                self.assertIn("raw-html", codes)
+
+        inline_opener = rendered_work_item("issue").replace(
+            "## Outcome",
+            "prefix <!--\n<div>\nraw\n</div>\n-->\n## Outcome",
+            1,
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("issue", inline_opener)
+        }
+        self.assertIn("raw-html", codes)
+
+        container_material = rendered_work_item(
+            "issue", risk_class="enhanced", risk_triggers="concurrency"
+        ).replace(
+            "## Design basis and approach\n\ndocumented",
+            "## Design basis and approach\n\ndocumented\n\n"
+            "- <div>\n  ### Concurrency model\n  documented",
+            1,
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("issue", container_material)
+        }
+        self.assertIn("missing-risk-material", codes)
+
+        container_fence = rendered_work_item(
+            "issue", risk_class="enhanced", risk_triggers="concurrency"
+        ).replace(
+            "## Design basis and approach\n\ndocumented",
+            "## Design basis and approach\n\ndocumented\n\n"
+            "- ```\n  ### Concurrency model\n  documented",
+            1,
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("issue", container_fence)
+        }
+        self.assertIn("missing-risk-material", codes)
+
+    def test_allows_html_comments_code_examples_and_autolinks(self):
+        issue = rendered_work_item("issue").replace(
+            "## Outcome",
+            "<!-- <div> note only -->\n"
+            "```html\n<div>\n```\n"
+            "    <div>\n"
+            "<https://example.test>\n\n"
+            "## Outcome",
+            1,
+        )
+        self.assertEqual(validate_work_item.validate("issue", issue), [])
+
+        indented_container_comment = rendered_work_item("issue").replace(
+            "## Outcome", "- item\n  <!--\n## Outcome\n-->", 1
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate(
+                "issue", indented_container_comment
+            )
+        }
+        self.assertIn("raw-html", codes)
+        self.assertNotIn("missing-section", codes)
+
+        indented_container_fence = rendered_work_item("issue").replace(
+            "## Outcome", "- item\n  ```\n## Outcome", 1
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate(
+                "issue", indented_container_fence
+            )
+        }
+        self.assertIn("noncanonical-fence", codes)
+        self.assertNotIn("missing-section", codes)
+
+        raw_after_container_fence = (
+            rendered_work_item("issue")
+            + "\n- item\n  ```\n<div>\nraw\n</div>\n"
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate(
+                "issue", raw_after_container_fence
+            )
+        }
+        self.assertTrue({"noncanonical-fence", "raw-html"}.issubset(codes))
+
+    def test_high_risk_requires_separate_preimplementation_design_audit(self):
+        issue = rendered_work_item(
+            "issue", risk_class="high", risk_triggers="security"
+        )
+        issue = add_subsection(
+            issue, "Risks, migration, and rollback", "Threat model"
+        )
+        codes = {
+            item["code"] for item in validate_work_item.validate("issue", issue)
+        }
+        self.assertIn("missing-risk-material", codes)
+
+        issue = add_subsection(
+            issue,
+            "Design basis and approach",
+            "Pre-implementation design audit",
+        )
+        self.assertEqual(validate_work_item.validate("issue", issue), [])
 
     def test_accepts_stable_stages_and_supported_sha_encodings(self):
         for stage in validate_work_item.STAGES:
@@ -400,6 +912,189 @@ class ValidateTests(unittest.TestCase):
                 variant = checkpoint.replace("- ", marker)
                 self.assertEqual(validate_work_item.validate("checkpoint", variant), [])
 
+        nested_legacy = checkpoint.replace(
+            "## Checkpoint", "## Checkpoint\n\n### Legacy details", 1
+        )
+        self.assertEqual(
+            validate_work_item.validate("checkpoint", nested_legacy), []
+        )
+
+    def test_checkpoint_rejects_fields_hidden_in_markdown_containers(self):
+        checkpoint = rendered_work_item("checkpoint")
+        fields = [
+            "  " + line.removeprefix("- ")
+            for line in checkpoint.splitlines()
+            if line.startswith("- ")
+        ]
+        for opener, expected in (
+            ("- <!--", "raw-html"),
+            ("- prefix <!--", "raw-html"),
+            ("- <div>", "raw-html"),
+            ("- ```", "noncanonical-fence"),
+        ):
+            with self.subTest(opener=opener):
+                hidden = "## Checkpoint\n\n" + opener + "\n" + "\n".join(fields)
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate("checkpoint", hidden)
+                }
+                self.assertIn(expected, codes)
+
+        inline_comment = (
+            "## Checkpoint\n\nprefix <!--\n"
+            + "\n".join(fields)
+            + "\n-->"
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate(
+                "checkpoint", inline_comment
+            )
+        }
+        self.assertIn("raw-html", codes)
+
+        plain_fields = "\n".join(line.removeprefix("  ") for line in fields)
+        for continuation in ("    <!--", "\t<!--"):
+            with self.subTest(continuation=repr(continuation)):
+                hidden_continuation = (
+                    "## Checkpoint\n\nprefix\n"
+                    + continuation
+                    + "\n"
+                    + plain_fields
+                    + "\n-->"
+                )
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate(
+                        "checkpoint", hidden_continuation
+                    )
+                }
+                self.assertIn("raw-html", codes)
+
+                hidden_list_continuation = (
+                    "## Checkpoint\n\n- prefix\n"
+                    + continuation
+                    + "\n"
+                    + "\n".join(fields)
+                    + "\n  -->"
+                )
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate(
+                        "checkpoint", hidden_list_continuation
+                    )
+                }
+                self.assertIn("raw-html", codes)
+
+        for literal in ("    <!-- literal", "\t<!-- literal"):
+            with self.subTest(literal=repr(literal)):
+                visible_fields = (
+                    "## Checkpoint\n\n" + literal + "\n" + plain_fields
+                )
+                self.assertEqual(
+                    validate_work_item.validate(
+                        "checkpoint", visible_fields
+                    ),
+                    [],
+                )
+
+        for opener, expected in (
+            ("> - <div>", "raw-html"),
+            ("- > ```", "noncanonical-fence"),
+        ):
+            with self.subTest(opener=opener):
+                nested = rendered_work_item("checkpoint") + "\n" + opener
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate("checkpoint", nested)
+                }
+                self.assertIn(expected, codes)
+
+    def test_legacy_plain_fields_cannot_hide_in_multiline_code_spans(self):
+        checkpoint = rendered_work_item("checkpoint")
+        plain_checkpoint = checkpoint.replace("- ", "")
+        hidden_checkpoint = plain_checkpoint.replace(
+            "## Checkpoint\n\n", "## Checkpoint\n\n`\n", 1
+        ).rstrip() + "\n`"
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate(
+                "checkpoint", hidden_checkpoint
+            )
+        }
+        self.assertIn("missing-field", codes)
+
+        plain_fields = "\n".join(
+            line
+            for line in plain_checkpoint.splitlines()
+            if ":" in line and not line.startswith("<!-")
+        )
+        for filler in (
+            "    indented continuation",
+            "\tindented continuation",
+            "0. ordered continuation",
+            "2. ordered continuation",
+            "*",
+            "+",
+            "1.",
+            "1)",
+        ):
+            with self.subTest(filler=repr(filler)):
+                hidden_with_indent = (
+                    "## Checkpoint\n\n`\n"
+                    + filler
+                    + "\n"
+                    + plain_fields
+                    + "\n`"
+                )
+                codes = {
+                    item["code"]
+                    for item in validate_work_item.validate(
+                        "checkpoint", hidden_with_indent
+                    )
+                }
+                self.assertIn("missing-field", codes)
+
+        interrupted_ordered = (
+            "## Checkpoint\n\n`\n1. list interruption\n"
+            + plain_fields
+            + "\n`"
+        )
+        self.assertEqual(
+            validate_work_item.validate("checkpoint", interrupted_ordered), []
+        )
+
+        interrupted_setext = (
+            "## Checkpoint\n\n`\n-\n" + plain_fields + "\n`"
+        )
+        self.assertEqual(
+            validate_work_item.validate("checkpoint", interrupted_setext), []
+        )
+
+        interrupted_checkpoint = checkpoint.replace(
+            "## Checkpoint\n\n", "## Checkpoint\n\n`\n", 1
+        ).rstrip() + "\n`"
+        self.assertEqual(
+            validate_work_item.validate("checkpoint", interrupted_checkpoint), []
+        )
+
+        pr = rendered_work_item("pr")
+        candidate_fields = (
+            f"- Candidate full SHA: {FULL_SHA}\n"
+            f"- Base evidence: main at {FULL_SHA}\n"
+            "- Tests and Actions: unit tests passed; Actions pending"
+        )
+        hidden_pr = pr.replace(
+            candidate_fields,
+            "`\n" + candidate_fields.replace("- ", "") + "\n`",
+            1,
+        )
+        codes = {
+            item["code"]
+            for item in validate_work_item.validate("pr", hidden_pr)
+        }
+        self.assertIn("missing-field", codes)
+
     def test_checkpoint_requires_all_fields_and_real_remote_sha(self):
         checkpoint = rendered_work_item("checkpoint")
         missing_completed = checkpoint.replace("- Completed: documented\n", "")
@@ -431,9 +1126,20 @@ class ValidateTests(unittest.TestCase):
         self.assertIn("invalid-value", codes)
 
     def test_cli_preserves_json_and_exit_code_contract(self):
+        huge_estimate = (
+            "production files="
+            + "9" * 5000
+            + "; net production lines=80; new primitives=none"
+        )
         for valid, text in (
             (True, rendered_work_item("issue")),
             (False, "Problem Outcome Scope State"),
+            (
+                False,
+                rendered_work_item(
+                    "issue", complexity_estimate=huge_estimate
+                ),
+            ),
         ):
             with self.subTest(valid=valid), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "issue.md"
@@ -557,6 +1263,63 @@ class SkillPolicyTests(unittest.TestCase):
         self.assertIn("current user message", skill)
         self.assertIn("never use admin bypass", review)
         self.assertIn("stop when the pr is ready for human review", review)
+
+    def test_risk_controls_are_progressive_and_do_not_tax_ordinary_work(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        issue_reference = (ROOT / "references" / "issue-and-epic.md").read_text(
+            encoding="utf-8"
+        )
+        risk = (ROOT / "references" / "risk-controls.md").read_text(encoding="utf-8")
+        complexity = (
+            ROOT / "references" / "complexity-and-decomposition.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Risk class", skill)
+        self.assertIn("references/risk-controls.md", skill)
+        self.assertIn("references/complexity-and-decomposition.md", skill)
+        self.assertIn("read only the matching section", skill)
+        for trigger in (
+            "security",
+            "privacy",
+            "persistence",
+            "transaction",
+            "migration",
+            "concurrency",
+            "shared-paths",
+            "decomposition",
+        ):
+            self.assertIn(trigger, issue_reference)
+        self.assertIn("more than 10 production files or 500 net production lines", issue_reference)
+        self.assertIn("New `storage`", issue_reference)
+        self.assertIn("`ordinary`, `enhanced`, or `high`", issue_reference)
+        self.assertIn("one or more comma-separated triggers", issue_reference)
+        self.assertIn("uses the `budget` trigger", issue_reference)
+        self.assertIn("budget override=<relative policy path>", issue_reference)
+        self.assertIn("production file budget=<n>", issue_reference)
+        self.assertIn("Do not load unmatched sections", issue_reference)
+        self.assertIn("Read only the section linked", risk)
+        self.assertIn("Ordinary work does not gain another GitHub write", complexity)
+        self.assertIn("does not automatically split or terminate", complexity)
+        self.assertIn("generated files, vendored code, tests, and documentation", complexity)
+
+    def test_decomposition_keeps_integration_and_review_boundaries(self):
+        reference = (
+            ROOT / "references" / "complexity-and-decomposition.md"
+        ).read_text(encoding="utf-8")
+        risk = (ROOT / "references" / "risk-controls.md").read_text(encoding="utf-8")
+        self.assertIn("independently reviewable, mergeable, acceptable, and reversible", reference)
+        self.assertIn("one integrator and one consolidated delivery PR", reference)
+        self.assertIn("never make the reviewer assemble track branches", reference)
+        self.assertIn("Child level", reference)
+        self.assertIn("Integration level", reference)
+        self.assertIn("Parent level", reference)
+        self.assertIn("A green child cannot override failed integration", reference)
+        self.assertIn("unfinished optional child must be explicitly removed", reference)
+        self.assertIn("only its design delta", reference)
+        for evidence in ("exact baseline", "acceptance", "rollback", "PR", "actual merge SHA"):
+            self.assertIn(evidence, reference)
+        self.assertIn("existing `blocked` stage with `Blocker` and `Next action`", reference)
+        self.assertIn("Close the parent last", reference)
+        self.assertIn("not a GitHub PR approval", risk)
 
 
 if __name__ == "__main__":

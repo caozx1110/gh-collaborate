@@ -49,6 +49,10 @@ Use one independently accept/reject/rollback outcome per atomic Issue and normal
 
 Before implementation, make the atomic Issue ready with problem/evidence, outcome, scope/non-goals, design basis, approach, dependencies/owner, risks/migration/rollback, acceptance checklist, test plan, and `stage / last remote SHA / blocker / next action`. Resolve material ambiguity and unmet dependencies before coding.
 
+Screen the Issue once with `Risk class`, `Risk triggers`, and `Complexity estimate`. An ordinary task stops at those three short fields. The compact routing index in [references/issue-and-epic.md](references/issue-and-epic.md) identifies triggers without loading enhanced guidance.
+
+For security, privacy, persistence, transaction, migration, concurrency, or high-risk work, read only the matching section of [references/risk-controls.md](references/risk-controls.md). For budget drift, shared paths, or parent/child delivery, read only the matching section of [references/complexity-and-decomposition.md](references/complexity-and-decomposition.md).
+
 ## Implement and checkpoint
 
 Create a clean Issue branch from the recorded baseline. Follow the repository's branch convention; otherwise use `agent/issue-<number>-<short-name>`. Never overwrite unknown work. Commit cohesive changes, push every handoff checkpoint without force, and record the full remote SHA plus validation, blocker, and next action.

@@ -45,6 +45,11 @@ SECTIONS = {
 }
 FIELDS = {
     "issue": {
+        "Dependencies and ownership": (
+            "Risk class",
+            "Risk triggers",
+            "Complexity estimate",
+        ),
         "State": (
             "Stage",
             "Baseline",
@@ -94,17 +99,102 @@ AUTO_CLOSE = re.compile(
     r"(?:[ \t]*:[ \t]*|[ \t]+)"
     r"(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#\d+\b"
 )
-ATX_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?)[ \t]*|[ \t]*)$")
-FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+ATX_HEADING = re.compile(r"^(#{1,6})(?:[ \t]+(.*?)[ \t]*|[ \t]*)$")
+FENCE_OPEN = re.compile(r"^(`{3,}|~{3,})(.*)$")
+INDENTED_FENCE_OPEN = re.compile(r"^ {1,3}(`{3,}|~{3,})(.*)$")
 FIELD_LINE = re.compile(
     r"^ {0,3}(?:[-*+][ \t]+)?([^:\n]+?):[ \t]*(.*?)[ \t]*$"
 )
+ISSUE_FIELD_LINE = re.compile(r"^- ([^:\n]+?):[ \t]*(.*?)[ \t]*$")
 FULL_SHA = re.compile(r"[0-9a-fA-F]{40}")
+RAW_HTML_TAG_START = re.compile(
+    r"^ {0,3}</?[A-Za-z][A-Za-z0-9-]*(?:[\t />]|$)"
+)
+RAW_HTML_DECLARATION = re.compile(r"^ {0,3}(?:<\?|<!\[CDATA\[|<![A-Za-z])")
+HTML_COMMENT_START = re.compile(r"^<!--")
+INDENTED_HTML_COMMENT = re.compile(r"^ {1,3}<!--")
+CONTAINER_PREFIX = (
+    r"^ {0,3}(?:(?:(?:[-+*]|\d{1,9}[.)])[\t ]+|>[\t ]*)[ ]{0,3})+"
+)
+CONTAINER_HTML_COMMENT = re.compile(CONTAINER_PREFIX + r".*<!--")
+CONTAINER_RAW_HTML = re.compile(
+    CONTAINER_PREFIX
+    + r"(?:</?[A-Za-z][A-Za-z0-9-]*(?:[\t />]|$)|<\?|<!\[CDATA\[|<![A-Za-z])"
+)
+CONTAINER_FENCE_OPEN = re.compile(CONTAINER_PREFIX + r"(?:`{3,}|~{3,})")
+COMMONMARK_ATX_START = re.compile(r"^ {0,3}#{1,6}(?:[\t ]+|$)")
+COMMONMARK_FENCE_START = re.compile(r"^ {0,3}(?:`{3,}|~{3,})")
+COMMONMARK_CONTAINER_START = re.compile(
+    r"^ {0,3}(?:(?:[-+*]|1[.)])[\t ]+\S|>)"
+)
+COMMONMARK_CONTAINER_WITH_CONTENT = re.compile(
+    r"^ {0,3}(?:(?:[-+*]|1[.)])[\t ]+\S|>[\t ]*\S)"
+)
+COMMONMARK_BLOCK_RULE = re.compile(
+    r"^ {0,3}(?:(?:\*[\t ]*){3,}|(?:_[\t ]*){3,}|(?:-[\t ]*){3,}|"
+    r"(?:=+|-+)[\t ]*)$"
+)
+POLICY_REFERENCE = re.compile(
+    r"(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+"
+    r"(?:#[A-Za-z0-9_.-]+)?"
+)
+RISK_CLASSES = frozenset({"ordinary", "enhanced", "high"})
+RISK_TRIGGERS = frozenset(
+    {
+        "security",
+        "privacy",
+        "persistence",
+        "transaction",
+        "migration",
+        "concurrency",
+        "shared-paths",
+        "budget",
+        "decomposition",
+    }
+)
+NEW_PRIMITIVES = frozenset({"storage", "transaction", "migration", "concurrency"})
+DEFAULT_PRODUCTION_FILE_BUDGET = 10
+DEFAULT_NET_LINE_BUDGET = 500
+MAX_COUNT_DIGITS = 9
+PRIMITIVE_TRIGGERS = {
+    "storage": "persistence",
+    "transaction": "transaction",
+    "migration": "migration",
+    "concurrency": "concurrency",
+}
+RISK_MATERIALS = {
+    "security": ("Risks, migration, and rollback", "Threat model"),
+    "privacy": ("Risks, migration, and rollback", "Threat model"),
+    "persistence": ("Risks, migration, and rollback", "Data invariants and recovery"),
+    "transaction": ("Risks, migration, and rollback", "Data invariants and recovery"),
+    "migration": ("Risks, migration, and rollback", "Data invariants and recovery"),
+    "concurrency": ("Design basis and approach", "Concurrency model"),
+    "shared-paths": ("Dependencies and ownership", "Ownership and integration plan"),
+    "budget": ("Design basis and approach", "Scope and budget decision"),
+    "decomposition": ("Dependencies and ownership", "Parent/child delivery plan"),
+}
+HIGH_RISK_AUDIT = ("Design basis and approach", "Pre-implementation design audit")
 
 
 class Section(TypedDict):
     title: str
     lines: list[str]
+    direct_lines: list[str]
+
+
+class Subsection(TypedDict):
+    parent: str
+    title: str
+    lines: list[str]
+
+
+class ComplexityEstimate(TypedDict):
+    production_files: int
+    net_production_lines: int
+    new_primitives: set[str]
+    budget_override: str | None
+    production_file_budget: int
+    net_production_line_budget: int
 
 
 def _heading_title(value: str) -> str:
@@ -130,6 +220,8 @@ def _is_fence_close(line: str, marker: tuple[str, int]) -> bool:
 
 
 def _is_indented_code(line: str) -> bool:
+    if not line.strip():
+        return False
     columns = 0
     for character in line:
         if character == " ":
@@ -162,100 +254,114 @@ def _is_escaped(line: str, position: int) -> bool:
     return backslashes % 2 == 1
 
 
-def _has_backtick_close(
+def _is_code_span_boundary(line: str) -> bool:
+    return bool(
+        not line.strip()
+        or COMMONMARK_ATX_START.match(line)
+        or COMMONMARK_FENCE_START.match(line)
+        or COMMONMARK_CONTAINER_START.match(line)
+        or COMMONMARK_BLOCK_RULE.match(line)
+        or RAW_HTML_TAG_START.match(line)
+        or RAW_HTML_DECLARATION.match(line)
+        or re.match(r"^ {0,3}<!--", line)
+    )
+
+
+def _find_backtick_close(
     lines: list[str], line_index: int, start: int, tick_count: int
-) -> bool:
+) -> tuple[int, int] | None:
     for index in range(line_index, len(lines)):
-        if index != line_index and (
-            not lines[index].strip()
-            or ATX_HEADING.match(lines[index])
-            or _fence_marker(lines[index]) is not None
-            or re.match(r"^ {0,3}<!--", lines[index])
-        ):
-            return False
+        if index != line_index and _is_code_span_boundary(lines[index]):
+            return None
         cursor = start if index == line_index else 0
         while True:
             tick_run = _backtick_run(lines[index], cursor)
             if tick_run is None:
                 break
             tick_start, tick_end = tick_run
-            if tick_end - tick_start == tick_count:
-                return True
+            if not _is_escaped(lines[index], tick_start):
+                if tick_end - tick_start == tick_count:
+                    return index, tick_end
             cursor = tick_end
-    return False
+    return None
+
+
+def _outside_multiline_code_spans(lines: list[str]) -> list[str]:
+    outside: list[str] = []
+    close_line = -1
+    for line_index, line in enumerate(lines):
+        if line_index <= close_line:
+            if line_index == close_line:
+                close_line = -1
+            continue
+        outside.append(line)
+        cursor = 0
+        while True:
+            tick_run = _backtick_run(line, cursor)
+            if tick_run is None:
+                break
+            tick_start, tick_end = tick_run
+            if _is_escaped(line, tick_start):
+                cursor = tick_start + 1
+                continue
+            close = _find_backtick_close(
+                lines, line_index, tick_end, tick_end - tick_start
+            )
+            if close is None:
+                cursor = tick_end
+                continue
+            if close[0] > line_index:
+                close_line = close[0]
+                break
+            cursor = close[1]
+    return outside
 
 
 def _mask_html_comments(text: str) -> str:
-    lines = text.splitlines()
     masked_lines: list[str] = []
     comment_open = False
-    code_span_ticks: int | None = None
     fence: tuple[str, int] | None = None
-    for line_index, line in enumerate(lines):
+    for line in text.splitlines():
         if fence is not None:
             masked_lines.append(line)
             if _is_fence_close(line, fence):
                 fence = None
             continue
-        if not comment_open and code_span_ticks is None and _is_indented_code(line):
+        if comment_open:
+            end = line.find("-->")
+            if end < 0:
+                masked_lines.append(" " * len(line))
+                continue
+            masked_lines.append(" " * (end + 3) + line[end + 3 :])
+            comment_open = False
+            continue
+        if _is_indented_code(line):
             masked_lines.append(line)
             continue
-        if not comment_open and code_span_ticks is None:
-            fence = _fence_marker(line)
-            if fence is not None:
-                masked_lines.append(line)
-                continue
-
-        masked = list(line)
-        cursor = 0
-        while cursor < len(line):
-            if comment_open:
-                end = line.find("-->", cursor)
-                if end < 0:
-                    masked[cursor:] = " " * (len(line) - cursor)
-                    break
-                masked[cursor : end + 3] = " " * (end + 3 - cursor)
-                cursor = end + 3
-                comment_open = False
-                continue
-
-            if code_span_ticks is not None:
-                tick_run = _backtick_run(line, cursor)
-                if tick_run is None:
-                    break
-                tick_start, tick_end = tick_run
-                if tick_end - tick_start == code_span_ticks:
-                    code_span_ticks = None
-                cursor = tick_end
-                continue
-
-            tick_run = _backtick_run(line, cursor)
-            start = line.find("<!--", cursor)
-            if tick_run is not None and (start < 0 or tick_run[0] < start):
-                tick_start, tick_end = tick_run
-                if _is_escaped(line, tick_start):
-                    cursor = tick_start + 1
-                    continue
-                tick_count = tick_end - tick_start
-                if _has_backtick_close(lines, line_index, tick_end, tick_count):
-                    code_span_ticks = tick_count
-                cursor = tick_end
-                continue
-            if start < 0:
-                break
-            if _is_escaped(line, start):
-                cursor = start + 4
-                continue
-            masked[start : start + 4] = " " * 4
-            cursor = start + 4
+        fence = _fence_marker(line)
+        if fence is not None:
+            masked_lines.append(line)
+            continue
+        match = HTML_COMMENT_START.match(line)
+        if match is None:
+            masked_lines.append(line)
+            continue
+        start = line.find("<!--")
+        end = line.find("-->", start + 4)
+        if end < 0:
+            masked_lines.append(line[:start] + " " * (len(line) - start))
             comment_open = True
-        masked_lines.append("".join(masked))
+            continue
+        masked_lines.append(
+            line[:start] + " " * (end + 3 - start) + line[end + 3 :]
+        )
     return "\n".join(masked_lines)
 
 
 def _parse_sections(text: str) -> list[Section]:
     sections: list[Section] = []
     current: Section | None = None
+    direct = False
     fence: tuple[str, int] | None = None
     for line in text.splitlines():
         if fence is not None:
@@ -274,16 +380,58 @@ def _parse_sections(text: str) -> list[Section]:
             level = len(match.group(1))
             if level <= 2:
                 current = None
+                direct = False
             if level == 2:
                 current = {
                     "title": _heading_title(match.group(2) or ""),
                     "lines": [],
+                    "direct_lines": [],
                 }
                 sections.append(current)
+                direct = True
+            elif level >= 3:
+                direct = False
             continue
         if current is not None:
             current["lines"].append(line)
+            if direct:
+                current["direct_lines"].append(line)
     return sections
+
+
+def _parse_subsections(text: str) -> list[Subsection]:
+    subsections: list[Subsection] = []
+    parent: str | None = None
+    current: Subsection | None = None
+    fence: tuple[str, int] | None = None
+    for line in text.splitlines():
+        if fence is not None:
+            if current is not None:
+                current["lines"].append(line)
+            if _is_fence_close(line, fence):
+                fence = None
+            continue
+        fence = _fence_marker(line)
+        if fence is not None:
+            if current is not None:
+                current["lines"].append(line)
+            continue
+        match = ATX_HEADING.match(line)
+        if match:
+            level = len(match.group(1))
+            title = _heading_title(match.group(2) or "")
+            if level <= 2:
+                parent = title if level == 2 else None
+                current = None
+            elif level == 3:
+                current = None
+                if parent is not None:
+                    current = {"parent": parent, "title": title, "lines": []}
+                    subsections.append(current)
+            continue
+        if current is not None:
+            current["lines"].append(line)
+    return subsections
 
 
 def _outside_fences(text: str) -> list[str]:
@@ -300,6 +448,115 @@ def _outside_fences(text: str) -> list[str]:
     return lines
 
 
+def _has_raw_html(text: str) -> bool:
+    for line in _outside_fences(text):
+        if _is_indented_code(line):
+            continue
+        if (
+            RAW_HTML_TAG_START.match(line)
+            or RAW_HTML_DECLARATION.match(line)
+            or INDENTED_HTML_COMMENT.match(line)
+            or CONTAINER_HTML_COMMENT.match(line)
+            or CONTAINER_RAW_HTML.match(line)
+        ):
+            return True
+    return _has_inline_html_comment(text)
+
+
+def _has_inline_html_comment(text: str) -> bool:
+    lines = text.splitlines()
+    close_line = -1
+    close_end = 0
+    fence: tuple[str, int] | None = None
+    paragraph_open = False
+    for line_index, line in enumerate(lines):
+        if fence is not None:
+            if _is_fence_close(line, fence):
+                fence = None
+            paragraph_open = False
+            continue
+        if line_index < close_line:
+            paragraph_open = True
+            continue
+        cursor = close_end if line_index == close_line else 0
+        if line_index == close_line:
+            close_line = -1
+            close_end = 0
+        if not line.strip():
+            paragraph_open = False
+            continue
+        fence = _fence_marker(line)
+        if fence is not None:
+            paragraph_open = False
+            continue
+        if _is_indented_code(line) and not paragraph_open:
+            continue
+        while cursor < len(line):
+            comment = line.find("<!--", cursor)
+            tick_run = _backtick_run(line, cursor)
+            if comment >= 0 and (tick_run is None or comment < tick_run[0]):
+                if not _is_escaped(line, comment):
+                    return True
+                cursor = comment + 4
+                continue
+            if tick_run is None:
+                break
+            tick_start, tick_end = tick_run
+            if _is_escaped(line, tick_start):
+                cursor = tick_start + 1
+                continue
+            close = _find_backtick_close(
+                lines, line_index, tick_end, tick_end - tick_start
+            )
+            if close is None:
+                cursor = tick_end
+                continue
+            if close[0] > line_index:
+                close_line, close_end = close
+                break
+            cursor = close[1]
+        if (
+            COMMONMARK_ATX_START.match(line)
+            or COMMONMARK_FENCE_START.match(line)
+            or COMMONMARK_BLOCK_RULE.match(line)
+            or RAW_HTML_TAG_START.match(line)
+            or RAW_HTML_DECLARATION.match(line)
+            or re.match(r"^ {0,3}<!--", line)
+        ):
+            paragraph_open = False
+        elif COMMONMARK_CONTAINER_WITH_CONTENT.match(line):
+            paragraph_open = True
+        elif COMMONMARK_CONTAINER_START.match(line):
+            paragraph_open = False
+        else:
+            paragraph_open = True
+    return False
+
+
+def _has_noncanonical_fence(text: str) -> bool:
+    for line in _outside_fences(text):
+        if not _is_indented_code(line) and (
+            INDENTED_FENCE_OPEN.match(line) or CONTAINER_FENCE_OPEN.match(line)
+        ):
+            return True
+    return False
+
+
+def _has_material_content(lines: list[str]) -> bool:
+    fence: tuple[str, int] | None = None
+    for line in lines:
+        if fence is not None:
+            if _is_fence_close(line, fence):
+                fence = None
+            elif line.strip():
+                return True
+            continue
+        fence = _fence_marker(line)
+        if fence is None and line.strip():
+            return True
+    return False
+
+
 def _section_body(section: Section) -> str:
     return "\n".join(section["lines"])
 
@@ -308,10 +565,17 @@ def _has_content(section: Section) -> bool:
     return bool(_section_body(section).strip())
 
 
-def _parse_fields(section: Section) -> dict[str, list[str]]:
+def _parse_fields(
+    section: Section, *, canonical: bool = False
+) -> dict[str, list[str]]:
     fields: dict[str, list[str]] = {}
-    for line in _outside_fences(_section_body(section)):
-        match = FIELD_LINE.fullmatch(line)
+    pattern = ISSUE_FIELD_LINE if canonical else FIELD_LINE
+    source_lines = section["direct_lines"] if canonical else section["lines"]
+    lines = _outside_fences("\n".join(source_lines))
+    if not canonical:
+        lines = _outside_multiline_code_spans(lines)
+    for line in lines:
+        match = pattern.fullmatch(line)
         if match:
             fields.setdefault(match.group(1).strip(), []).append(match.group(2).strip())
     return fields
@@ -324,6 +588,89 @@ def _code_value(value: str) -> str:
     return stripped
 
 
+def _parse_named_set(
+    value: str, allowed: frozenset[str], label: str
+) -> tuple[set[str] | None, str | None]:
+    normalized = _code_value(value)
+    if normalized == EMPTY_VALUE:
+        return set(), None
+    items = [item.strip() for item in normalized.split(",")]
+    if any(not item for item in items):
+        return None, f"{label} must be none or a comma-separated list"
+    if len(items) != len(set(items)):
+        return None, f"{label} must not contain duplicates"
+    unknown = sorted(set(items) - allowed)
+    if unknown:
+        return None, f"{label} contains unsupported values: {', '.join(unknown)}"
+    return set(items), None
+
+
+def _parse_complexity(value: str) -> tuple[ComplexityEstimate | None, str | None]:
+    parts: dict[str, str] = {}
+    for segment in _code_value(value).split(";"):
+        if "=" not in segment:
+            return None, "must use key=value segments separated by semicolons"
+        key, item = (part.strip() for part in segment.split("=", 1))
+        if not key or not item:
+            return None, "must not contain an empty key or value"
+        if key in parts:
+            return None, f"must not repeat {key}"
+        parts[key] = item
+
+    required = {"production files", "net production lines", "new primitives"}
+    override_fields = {
+        "budget override",
+        "production file budget",
+        "net production line budget",
+    }
+    allowed = required | override_fields
+    missing = sorted(required - set(parts))
+    unknown = sorted(set(parts) - allowed)
+    if missing:
+        return None, "is missing: " + ", ".join(missing)
+    if unknown:
+        return None, "contains unsupported keys: " + ", ".join(unknown)
+    present_overrides = set(parts) & override_fields
+    if present_overrides and present_overrides != override_fields:
+        missing_overrides = sorted(override_fields - present_overrides)
+        return None, "budget override is missing: " + ", ".join(missing_overrides)
+    numeric_fields = ["production files", "net production lines"]
+    if present_overrides:
+        numeric_fields.extend(["production file budget", "net production line budget"])
+    for key in numeric_fields:
+        if not re.fullmatch(r"\d+", parts[key]):
+            return None, f"requires a non-negative integer for {key}"
+        if len(parts[key]) > MAX_COUNT_DIGITS:
+            return None, f"requires at most {MAX_COUNT_DIGITS} digits for {key}"
+    primitives, error = _parse_named_set(
+        parts["new primitives"], NEW_PRIMITIVES, "new primitives"
+    )
+    if error or primitives is None:
+        return None, error
+    override = parts.get("budget override")
+    if override is not None:
+        policy_path = override.split("#", 1)[0]
+        if (
+            not POLICY_REFERENCE.fullmatch(override)
+            or any(part in {".", ".."} for part in policy_path.split("/"))
+        ):
+            return None, "budget override must be a relative tracked-policy reference"
+    production_file_budget = int(
+        parts.get("production file budget", str(DEFAULT_PRODUCTION_FILE_BUDGET))
+    )
+    net_production_line_budget = int(
+        parts.get("net production line budget", str(DEFAULT_NET_LINE_BUDGET))
+    )
+    return {
+        "production_files": int(parts["production files"]),
+        "net_production_lines": int(parts["net production lines"]),
+        "new_primitives": primitives,
+        "budget_override": override,
+        "production_file_budget": production_file_budget,
+        "net_production_line_budget": net_production_line_budget,
+    }, None
+
+
 def _invalid_value(field: str, value: str) -> str | None:
     normalized = _code_value(value)
     if not normalized:
@@ -332,6 +679,16 @@ def _invalid_value(field: str, value: str) -> str | None:
         if normalized not in STAGES:
             return "must be one of: " + ", ".join(sorted(STAGES))
         return None
+    if field == "Risk class":
+        if normalized not in RISK_CLASSES:
+            return "must be one of: " + ", ".join(sorted(RISK_CLASSES))
+        return None
+    if field == "Risk triggers":
+        _, error = _parse_named_set(value, RISK_TRIGGERS, "risk triggers")
+        return error
+    if field == "Complexity estimate":
+        _, error = _parse_complexity(value)
+        return error
     if field in {"Baseline", "Full remote SHA", "Candidate full SHA"}:
         if not FULL_SHA.fullmatch(normalized):
             return "must contain exactly one 40-character SHA"
@@ -347,13 +704,101 @@ def _invalid_value(field: str, value: str) -> str | None:
     return None
 
 
+def _validate_issue_screening(
+    unique: dict[str, Section], subsections: list[Subsection]
+) -> list[dict[str, str]]:
+    section = unique.get("Dependencies and ownership")
+    if section is None:
+        return []
+    fields = _parse_fields(section, canonical=True)
+    required = ("Risk class", "Risk triggers", "Complexity estimate")
+    if any(len(fields.get(field, [])) != 1 for field in required):
+        return []
+
+    risk_class = _code_value(fields["Risk class"][0])
+    triggers, trigger_error = _parse_named_set(
+        fields["Risk triggers"][0], RISK_TRIGGERS, "risk triggers"
+    )
+    estimate, estimate_error = _parse_complexity(fields["Complexity estimate"][0])
+    if risk_class not in RISK_CLASSES or trigger_error or estimate_error:
+        return []
+    assert triggers is not None and estimate is not None
+
+    findings: list[dict[str, str]] = []
+    if risk_class == "ordinary" and triggers:
+        findings.append(
+            _finding("invalid-risk-class", "ordinary Issues must use Risk triggers: none")
+        )
+    if risk_class != "ordinary" and not triggers:
+        findings.append(
+            _finding("invalid-risk-class", f"{risk_class} Issues require at least one risk trigger")
+        )
+
+    expected: set[str] = {
+        PRIMITIVE_TRIGGERS[primitive] for primitive in estimate["new_primitives"]
+    }
+    if (
+        estimate["production_files"] > estimate["production_file_budget"]
+        or estimate["net_production_lines"] > estimate["net_production_line_budget"]
+    ):
+        expected.add("budget")
+    for missing in sorted(expected - triggers):
+        findings.append(
+            _finding(
+                "missing-risk-trigger",
+                f"Complexity estimate requires the {missing} risk trigger",
+            )
+        )
+    if risk_class == "ordinary" and expected:
+        findings.append(
+            _finding(
+                "invalid-risk-class",
+                "ordinary Issues cannot exceed the applicable budget or add new primitives",
+            )
+        )
+
+    by_identity: dict[tuple[str, str], list[Subsection]] = {}
+    for subsection in subsections:
+        identity = (subsection["parent"], subsection["title"])
+        by_identity.setdefault(identity, []).append(subsection)
+    materials = {RISK_MATERIALS[trigger] for trigger in triggers}
+    if risk_class == "high":
+        materials.add(HIGH_RISK_AUDIT)
+    for parent, title in sorted(materials):
+        matches = by_identity.get((parent, title), [])
+        identity = f"{parent}: {title}"
+        if not matches:
+            findings.append(_finding("missing-risk-material", identity))
+            continue
+        if len(matches) > 1:
+            findings.append(_finding("duplicate-risk-material", identity))
+        if any(not _has_material_content(match["lines"]) for match in matches):
+            findings.append(_finding("empty-risk-material", identity))
+    return findings
+
+
 def _finding(code: str, message: str) -> dict[str, str]:
     return {"severity": "error", "code": code, "message": message}
 
 
 def _validate_structure(kind: str, text: str) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
-    parsed = _parse_sections(_mask_html_comments(text))
+    masked = _mask_html_comments(text)
+    if _has_raw_html(masked):
+        findings.append(
+            _finding(
+                "raw-html",
+                "line-start raw HTML is not allowed; use Markdown or a code block",
+            )
+        )
+    if _has_noncanonical_fence(masked):
+        findings.append(
+            _finding(
+                "noncanonical-fence",
+                "fenced code openers must start at column zero",
+            )
+        )
+    parsed = _parse_sections(masked)
     by_title: dict[str, list[Section]] = {}
     for section in parsed:
         by_title.setdefault(str(section["title"]), []).append(section)
@@ -375,7 +820,7 @@ def _validate_structure(kind: str, text: str) -> list[dict[str, str]]:
         section = unique.get(section_title)
         if section is None:
             continue
-        parsed_fields = _parse_fields(section)
+        parsed_fields = _parse_fields(section, canonical=kind == "issue")
         for field in required_fields:
             values = parsed_fields.get(field, [])
             if not values:
@@ -408,6 +853,8 @@ def _validate_structure(kind: str, text: str) -> list[dict[str, str]]:
                             "Full remote SHA must contain exactly one 40-character SHA",
                         )
                     )
+    if kind == "issue":
+        findings.extend(_validate_issue_screening(unique, _parse_subsections(masked)))
     return findings
 
 
