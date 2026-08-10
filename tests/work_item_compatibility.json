@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "legal-epic",
+      "kind": "epic",
+      "operations": [],
+      "expected_findings": []
+    },
+    {
+      "id": "legal-issue",
+      "kind": "issue",
+      "operations": [],
+      "expected_findings": []
+    },
+    {
+      "id": "legal-checkpoint",
+      "kind": "checkpoint",
+      "operations": [],
+      "expected_findings": []
+    },
+    {
+      "id": "legal-pr",
+      "kind": "pr",
+      "operations": [],
+      "expected_findings": []
+    },
+    {
+      "id": "code-span-comment-literal",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "replace",
+          "old": "## Outcome",
+          "new": "Literal opener syntax: `<!--`\n\n## Outcome"
+        }
+      ],
+      "expected_findings": []
+    },
+    {
+      "id": "hidden-stage-comment",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "replace",
+          "old": "- Stage: ready",
+          "new": "<!--\n- Stage: ready\n-->"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "missing-field",
+          "message": "State: Stage"
+        }
+      ]
+    },
+    {
+      "id": "hidden-risk-inline-comment",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "replace",
+          "old": "- Risk class: ordinary\n- Risk triggers: none\n- Complexity estimate: production files=2; net production lines=80; new primitives=none",
+          "new": "Visible text <!--\n- Risk class: ordinary\n- Risk triggers: none\n- Complexity estimate: production files=2; net production lines=80; new primitives=none\n-->"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "raw-html",
+          "message": "line-start raw HTML is not allowed; use Markdown or a code block"
+        }
+      ]
+    },
+    {
+      "id": "field-hidden-in-fence",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "replace",
+          "old": "- Stage: ready",
+          "new": "```text\n- Stage: ready\n```"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "missing-field",
+          "message": "State: Stage"
+        }
+      ]
+    },
+    {
+      "id": "heading-hidden-in-container",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "replace",
+          "old": "## Outcome",
+          "new": "> ## Outcome"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "missing-section",
+          "message": "Outcome"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-section",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "append",
+          "text": "\n## State\n\nduplicate content\n"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "duplicate-section",
+          "message": "State"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-field",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "replace",
+          "old": "- Stage: ready",
+          "new": "- Stage: ready\n- Stage: ready"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "duplicate-field",
+          "message": "State: Stage"
+        }
+      ]
+    },
+    {
+      "id": "noncanonical-container-fence",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "replace",
+          "old": "## Outcome",
+          "new": "- ```\n## Outcome"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "noncanonical-fence",
+          "message": "fenced code openers must start at column zero"
+        }
+      ]
+    },
+    {
+      "id": "unmatched-code-span-before-comment",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "replace",
+          "old": "## Problem and evidence\n\ndocumented",
+          "new": "## Notes\n\nUnmatched ` delimiter\n\n<!--\n## Problem and evidence\n\nhidden\n-->"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "missing-section",
+          "message": "Problem and evidence"
+        }
+      ]
+    },
+    {
+      "id": "secret-inside-comment",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "append",
+          "text": "\n<!-- github_pat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA -->\n"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "secret",
+          "message": "GitHub token"
+        }
+      ]
+    },
+    {
+      "id": "local-path-inside-fence",
+      "kind": "issue",
+      "operations": [
+        {
+          "op": "append",
+          "text": "\n```text\n/Users/example/output\n```\n"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "local-path",
+          "message": "machine-local path"
+        }
+      ]
+    },
+    {
+      "id": "auto-close-inside-pr-fence",
+      "kind": "pr",
+      "operations": [
+        {
+          "op": "append",
+          "text": "\n```text\nFixes #99\n```\n"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "auto-close",
+          "message": "use Refs unless repository policy requires auto-close"
+        }
+      ]
+    },
+    {
+      "id": "placeholder-inside-comment",
+      "kind": "checkpoint",
+      "operations": [
+        {
+          "op": "append",
+          "text": "\n<!-- {{UNRESOLVED}} -->\n"
+        }
+      ],
+      "expected_findings": [
+        {
+          "severity": "error",
+          "code": "placeholder",
+          "message": "unresolved template placeholder"
+        }
+      ]
+    }
+  ]
+}
