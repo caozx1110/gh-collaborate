@@ -57,7 +57,7 @@ For security, privacy, persistence, transaction, migration, concurrency, or high
 
 Create a clean Issue branch from the recorded baseline. Follow the repository's branch convention; otherwise use `agent/issue-<number>-<short-name>`. Never overwrite unknown work. Commit cohesive changes, push every handoff checkpoint without force, and record the full remote SHA plus validation, blocker, and next action.
 
-Read [references/delivery-and-resume.md](references/delivery-and-resume.md) for branch, worktree, checkpoint, and recovery details. Use [references/parallel-and-recovery.md](references/parallel-and-recovery.md) only for concurrent tracks, takeover, migrations, security work, ambiguous failures, or high-risk delivery.
+Read [references/delivery-and-resume.md](references/delivery-and-resume.md) for branch, evidence identity, milestone checkpoint, and recovery details. Use targeted tests while iterating; bind the stable full gate, final complexity reconciliation, review, branch CI, tested-merge CI, and post-merge smoke to their exact candidate inputs. Use [references/parallel-and-recovery.md](references/parallel-and-recovery.md) only for concurrent tracks, takeover, migrations, security work, ambiguous failures, or high-risk delivery.
 
 ## Deliver for review
 

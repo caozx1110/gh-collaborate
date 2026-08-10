@@ -8,5 +8,8 @@
 - Completed: {{COMPLETED}}
 - Remaining: {{REMAINING}}
 - Validation: {{VALIDATION}}
+- Evidence identity: {{EVIDENCE_IDENTITY}}
+- Invalidated evidence: {{INVALIDATED_EVIDENCE}}
+- Complexity reconciliation: {{COMPLEXITY_RECONCILIATION}}
 - Blocker: {{BLOCKER}}
 - Next action: {{NEXT_ACTION}}

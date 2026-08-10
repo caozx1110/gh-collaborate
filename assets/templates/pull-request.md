@@ -17,6 +17,8 @@
 - Candidate full SHA: {{CANDIDATE_FULL_SHA}}
 - Base evidence: {{BASE_EVIDENCE}}
 - Tests and Actions: {{TESTS_AND_ACTIONS}}
+- Evidence identity: {{EVIDENCE_IDENTITY}}
+- Complexity reconciliation: {{COMPLEXITY_RECONCILIATION}}
 
 ## Risks and rollback
 
