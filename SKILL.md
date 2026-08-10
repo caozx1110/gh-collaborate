@@ -51,6 +51,10 @@ Before implementation, make the atomic Issue ready with problem/evidence, outcom
 
 Screen the Issue once with `Risk class`, `Risk triggers`, and `Complexity estimate`. An ordinary task stops at those three short fields. The compact routing index in [references/issue-and-epic.md](references/issue-and-epic.md) identifies triggers without loading enhanced guidance.
 
+For an ordinary Issue with no matching trigger, default each prose section to one or two sentences, the acceptance checklist to at most three checks, and the test plan to at most two checks. Keep every required heading and recovery field, and expand only when repository policy or concrete evidence requires it.
+
+Do not load enhanced-only references, invent extra reviewers or GitHub writes, or prescribe a full-suite run merely because the task uses the Issue workflow. Current authority, repository policy, or matching risk evidence must require the added control.
+
 For security, privacy, persistence, transaction, migration, concurrency, or high-risk work, read only the matching section of [references/risk-controls.md](references/risk-controls.md). For budget drift, shared paths, or parent/child delivery, read only the matching section of [references/complexity-and-decomposition.md](references/complexity-and-decomposition.md).
 
 ## Implement and checkpoint
