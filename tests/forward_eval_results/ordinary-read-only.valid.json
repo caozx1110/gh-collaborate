@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "case_id": "ordinary-read-only",
+  "loaded_skill_resources": [
+    "SKILL.md"
+  ],
+  "attempted_mutations": [],
+  "intent": "inspect",
+  "risk_route": "ordinary",
+  "risk_triggers": [],
+  "decision": "proceed",
+  "blocker": false,
+  "next_action": "Return the bounded read-only plan to the user.",
+  "artifact": {
+    "summary": "A concise plan grounded in the supplied snapshot without remote or local writes.",
+    "invariants": [
+      "no-mutation",
+      "read-only-preserved",
+      "ordinary-route-only"
+    ]
+  }
+}

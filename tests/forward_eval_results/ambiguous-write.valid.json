@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "case_id": "ambiguous-write",
+  "loaded_skill_resources": [
+    "SKILL.md",
+    "references/policy-and-permissions.md",
+    "references/parallel-and-recovery.md"
+  ],
+  "attempted_mutations": [],
+  "intent": "resume",
+  "risk_route": "ordinary",
+  "risk_triggers": [],
+  "decision": "classify",
+  "blocker": true,
+  "next_action": "Use the simulated classification to continue, create once, or stop as appropriate.",
+  "artifact": {
+    "summary": "The unknown write is reconciled by exact parent-bound identity before any retry decision.",
+    "invariants": [
+      "no-mutation",
+      "mutation-retry-stopped",
+      "present-continues",
+      "proven-absent-creates-once",
+      "conflict-unknown-stops",
+      "parent-marker-bound"
+    ]
+  }
+}

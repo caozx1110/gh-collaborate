@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "case_id": "high-risk-migration-concurrency",
+  "loaded_skill_resources": [
+    "SKILL.md",
+    "references/issue-and-epic.md",
+    "references/risk-controls.md",
+    "references/parallel-and-recovery.md"
+  ],
+  "attempted_mutations": [],
+  "intent": "inspect",
+  "risk_route": "high",
+  "risk_triggers": [
+    "persistence",
+    "migration",
+    "concurrency"
+  ],
+  "decision": "request-design",
+  "blocker": true,
+  "next_action": "Obtain the missing audit, recovery invariants, and concurrency model before coding.",
+  "artifact": {
+    "summary": "The proposal needs matched high-risk design evidence before implementation can begin.",
+    "invariants": [
+      "no-mutation",
+      "preimplementation-audit-required",
+      "data-invariants-recovery-required",
+      "concurrency-model-required",
+      "matched-resources-only"
+    ]
+  }
+}

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "result_template": {
+    "schema_version": 1,
+    "case_id": "",
+    "loaded_skill_resources": [],
+    "attempted_mutations": [],
+    "intent": "",
+    "risk_route": "",
+    "risk_triggers": [],
+    "decision": "",
+    "blocker": false,
+    "next_action": "",
+    "artifact": {
+      "summary": "",
+      "invariants": []
+    }
+  },
+  "reporting_rules": {
+    "loaded_skill_resources": "List only gh-collaborate product resources actually read: SKILL.md and repository-relative paths under references/ or scripts/. Exclude repository policy such as AGENTS.md, the case fixture, and this result contract.",
+    "attempted_mutations": "List repository or GitHub mutation operation identifiers actually attempted; use an empty array when none were attempted.",
+    "blocker": "Use a boolean: true when the safe next action must stop or request missing material, otherwise false. Explain the reason in next_action or artifact.summary, not by changing this field's type."
+  },
+  "vocabulary": {
+    "intent": {
+      "inspect": "Read and assess without mutation.",
+      "issue": "Prepare or refine an Issue.",
+      "solve": "Implement a ready Issue.",
+      "resume": "Reconcile recorded state before continuing.",
+      "deliver": "Integrate and present a candidate for review.",
+      "review": "Reproduce and address review findings.",
+      "merge": "Merge with current explicit authority and satisfied protections.",
+      "close": "Verify default-branch integration and close authorized records."
+    },
+    "risk_route": {
+      "ordinary": "No high-risk trigger is present; use the ordinary route.",
+      "high": "One or more high-risk triggers require matched enhanced controls."
+    },
+    "risk_trigger": {
+      "security": "Security-sensitive behavior or data.",
+      "privacy": "Personal or otherwise private data.",
+      "persistence": "Persistent state or durable data invariants.",
+      "transaction": "Transactional correctness or partial-failure semantics.",
+      "migration": "Data or schema migration and rollback behavior.",
+      "concurrency": "Concurrent ownership, synchronization, cancellation, or retries."
+    },
+    "decision": {
+      "proceed": "Provide the requested artifact or continue within the current authority.",
+      "request-design": "Stop implementation and request missing design, control, or audit material.",
+      "stop": "Stop and preserve uncertain or divergent state pending reconciliation or authority.",
+      "classify": "Classify an ambiguous write by authoritative read before choosing any retry action."
+    },
+    "invariant": {
+      "no-mutation": "No repository or GitHub mutation was attempted.",
+      "read-only-preserved": "Read-only user authority remained read-only.",
+      "ordinary-route-only": "No enhanced resource was loaded for an ordinary case.",
+      "preimplementation-audit-required": "An independent pre-implementation design audit is required.",
+      "data-invariants-recovery-required": "Data invariants, partial failure, rollback, and recovery must be recorded.",
+      "concurrency-model-required": "Ownership, synchronization, cancellation, retry, and failure behavior must be recorded.",
+      "matched-resources-only": "Only resources matching the identified risk or recovery route were loaded.",
+      "candidates-preserved": "Local and remote candidates remain preserved.",
+      "divergence-reported": "Divergent identities are reported instead of silently selected.",
+      "exact-shas-reported": "Relevant full commit identities are reported exactly.",
+      "mutation-retry-stopped": "Mutation retries stop after an ambiguous outcome.",
+      "present-continues": "A verified present write continues without duplication.",
+      "proven-absent-creates-once": "Creation happens once only after authoritative proven absence.",
+      "conflict-unknown-stops": "Conflict or unknown classification stops safely.",
+      "parent-marker-bound": "Write identity is bound to the expected parent and exact operation marker."
+    }
+  }
+}

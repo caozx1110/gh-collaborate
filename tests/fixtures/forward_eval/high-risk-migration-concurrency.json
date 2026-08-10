@@ -1,0 +1,16 @@
+{
+  "fixture_id": "high-risk-migration-concurrency",
+  "allowed_mutations": [],
+  "repository": {
+    "name": "example/project",
+    "default_branch": "main",
+    "baseline_sha": "2222222222222222222222222222222222222222",
+    "worktree": "clean"
+  },
+  "proposal": {
+    "changes_persistent_schema": true,
+    "runs_backfill_workers_concurrently": true,
+    "design_audit_recorded": false,
+    "rollback_invariants_recorded": false
+  }
+}
