@@ -1,0 +1,19 @@
+{
+  "fixture_id": "ambiguous-write",
+  "allowed_mutations": [],
+  "repository": {
+    "name": "example/project",
+    "parent_issue": 42
+  },
+  "operation": {
+    "kind": "comment",
+    "marker": "ghc:42:comment:example",
+    "original_result": "connection-reset"
+  },
+  "simulated_reads": {
+    "present": "one exact parent-bound match",
+    "absent": "healthy authoritative empty result",
+    "conflict": "multiple matches or identity mismatch",
+    "unknown": "degraded or malformed response"
+  }
+}

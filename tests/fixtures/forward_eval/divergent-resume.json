@@ -1,0 +1,16 @@
+{
+  "fixture_id": "divergent-resume",
+  "allowed_mutations": [],
+  "repository": {
+    "name": "example/project",
+    "default_branch": "main",
+    "baseline_sha": "3333333333333333333333333333333333333333"
+  },
+  "resume_state": {
+    "issue_number": 42,
+    "checkpoint_sha": "4444444444444444444444444444444444444444",
+    "remote_branch_sha": "4444444444444444444444444444444444444444",
+    "local_branch_sha": "5555555555555555555555555555555555555555",
+    "local_authorship": "unknown"
+  }
+}

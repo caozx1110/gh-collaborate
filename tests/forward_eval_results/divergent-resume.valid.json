@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "case_id": "divergent-resume",
+  "loaded_skill_resources": [
+    "SKILL.md",
+    "references/delivery-and-resume.md",
+    "references/parallel-and-recovery.md"
+  ],
+  "attempted_mutations": [],
+  "intent": "resume",
+  "risk_route": "ordinary",
+  "risk_triggers": [],
+  "decision": "stop",
+  "blocker": true,
+  "next_action": "Report both exact candidates and request authority before selecting a lineage.",
+  "artifact": {
+    "summary": "Local and remote identities diverge, so neither candidate is overwritten.",
+    "invariants": [
+      "no-mutation",
+      "candidates-preserved",
+      "divergence-reported",
+      "exact-shas-reported"
+    ]
+  }
+}

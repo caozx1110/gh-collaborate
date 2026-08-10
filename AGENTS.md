@@ -19,6 +19,7 @@ Local chat, private Agent memory, untracked plans, stash, unpushed commits, and 
 4. Work on `agent/issue-<number>-<short-name>` or a repository-approved equivalent. Preserve unrelated work, stage explicit paths, commit cohesively, push checkpoints, and record full remote SHAs.
 5. Integrate parallel tracks into one delivery branch and one consolidated PR. The reviewer must not assemble branches.
 6. Run `python3 -m unittest discover -s tests -v` and the official skill validator. Open Draft until acceptance and CI are complete.
+   After a substantial behavior change, run representative cases from `tests/forward_eval_cases.json` with a fresh Agent in an isolated fixture, validate each structured result with `scripts/validate_forward_eval.py`, and record only the invariant summary in the PR. Give the runner only the neutral prompt, fixture, and `tests/forward_eval_result_contract.json`; keep allowed/forbidden resources and expected invariants evaluator-side. Forward evaluation validates accepted Issue requirements; it never defines them. Do not commit transcripts or machine-specific traces.
 7. Stop for human review. Never self-approve, use admin bypass, or merge without explicit current-message authorization after revalidating protections.
 8. After human merge, verify default-branch Actions/smoke, update Issues with the actual merge SHA, and close only under human or documented workflow authority.
 

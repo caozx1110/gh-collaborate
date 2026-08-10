@@ -1,0 +1,14 @@
+{
+  "fixture_id": "ordinary-read-only",
+  "allowed_mutations": [],
+  "repository": {
+    "name": "example/project",
+    "default_branch": "main",
+    "baseline_sha": "1111111111111111111111111111111111111111",
+    "worktree": "clean"
+  },
+  "policy": {
+    "read_only_request_stays_read_only": true,
+    "risk_triggers": []
+  }
+}
