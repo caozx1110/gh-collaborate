@@ -13,7 +13,7 @@ Search by head branch, atomic Issue, and operation marker before creation. Use D
 - known limits and follow-up Issues;
 - for parallel work: track, source SHA, integration commit, owned paths, and evidence.
 
-Avoid auto-close keywords for critical Issues when post-merge smoke is required. Re-read the PR after creation or update and confirm head/base identity.
+Avoid auto-close keywords for critical Issues when post-merge smoke is required. Verify the PR after creation or update from a sufficient structured response, or use one bounded readback when the response is URL-only or incomplete; confirm repository, actor, body, URL, and exact head/base identity.
 
 ## Validate the candidate
 

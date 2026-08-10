@@ -1467,11 +1467,236 @@ class InspectTests(unittest.TestCase):
 
 
 class ReconcileTests(unittest.TestCase):
+    marker = "ghc:10:write:response"
+    body = "<!-- operation-marker: ghc:10:write:response -->\n\nverified body"
+
+    def issue_response(self):
+        return {
+            "number": 10,
+            "html_url": "https://github.com/owner/repo/issues/10",
+            "repository_url": "https://api.github.com/repos/owner/repo",
+            "user": {"login": "agent-user"},
+            "body": self.body,
+        }
+
+    def comment_response(self):
+        return {
+            "id": 99,
+            "html_url": "https://github.com/owner/repo/issues/10#issuecomment-99",
+            "issue_url": "https://api.github.com/repos/owner/repo/issues/10",
+            "user": {"login": "agent-user"},
+            "body": self.body,
+        }
+
+    def pr_response(self):
+        return {
+            "number": 20,
+            "html_url": "https://github.com/owner/repo/pull/20",
+            "user": {"login": "agent-user"},
+            "body": self.body,
+            "head": {"ref": "agent/issue-10", "sha": "a" * 40},
+            "base": {
+                "ref": "development",
+                "sha": "b" * 40,
+                "repo": {"full_name": "owner/repo"},
+            },
+        }
+
+    def verify(self, kind, response, **overrides):
+        arguments = {
+            "repo": "owner/repo",
+            "actor": "agent-user",
+            "marker": self.marker,
+            "body": self.body,
+        }
+        if kind == "comment":
+            arguments["parent_number"] = 10
+        if kind == "pr":
+            arguments.update(
+                {
+                    "head_ref": "agent/issue-10",
+                    "head_sha": "a" * 40,
+                    "base_ref": "development",
+                    "base_sha": "b" * 40,
+                }
+            )
+        arguments.update(overrides)
+        return reconcile_state.verify_write_response(kind, response, **arguments)
+
     def test_classification(self):
         self.assertEqual(reconcile_state.classify([], []), "absent")
         self.assertEqual(reconcile_state.classify([{}], []), "present")
         self.assertEqual(reconcile_state.classify([{}, {}], []), "conflict")
         self.assertEqual(reconcile_state.classify([], ["offline"]), "unknown")
+        self.assertEqual(reconcile_state.exit_code("present"), 0)
+        self.assertEqual(reconcile_state.exit_code("absent"), 0)
+        self.assertEqual(reconcile_state.exit_code("unknown"), 2)
+        self.assertEqual(reconcile_state.exit_code("conflict"), 3)
+
+    def test_complete_structured_write_responses_are_verified_without_a_read(self):
+        cases = (
+            ("issue", self.issue_response()),
+            ("comment", self.comment_response()),
+            ("pr", self.pr_response()),
+        )
+        with mock.patch.object(reconcile_state, "gh") as gh_mock:
+            for kind, response in cases:
+                with self.subTest(kind=kind):
+                    result = self.verify(kind, response)
+                    self.assertEqual(result["classification"], "verified")
+                    self.assertEqual(result["missing"], [])
+                    self.assertEqual(result["conflicts"], [])
+        gh_mock.assert_not_called()
+
+        update = self.issue_response()
+        update["user"]["login"] = "human-author"
+        result = self.verify("issue", update, author="human-author", number=10)
+        self.assertEqual(result["classification"], "verified")
+        self.assertEqual(result["identity"]["actor"], "agent-user")
+        self.assertEqual(result["identity"]["author"], "human-author")
+
+    def test_url_only_and_missing_fields_require_one_bounded_readback(self):
+        self.assertEqual(
+            self.verify("issue", "https://github.com/owner/repo/issues/10")[
+                "classification"
+            ],
+            "readback-required",
+        )
+        incomplete = self.issue_response()
+        incomplete.pop("body")
+        result = self.verify("issue", incomplete)
+        self.assertEqual(result["classification"], "readback-required")
+        self.assertIn("body", result["missing"])
+        self.assertEqual(
+            self.verify("issue", self.issue_response())["classification"],
+            "verified",
+        )
+
+    def test_present_mismatches_are_conflicts(self):
+        cases = []
+        wrong_repo = self.issue_response()
+        wrong_repo["repository_url"] = "https://api.github.com/repos/other/repo"
+        cases.append(("issue-repo", "issue", wrong_repo, {}))
+        wrong_actor = self.issue_response()
+        wrong_actor["user"]["login"] = "other-user"
+        cases.append(("issue-actor", "issue", wrong_actor, {}))
+        wrong_body = self.issue_response()
+        wrong_body["body"] = self.body + " changed"
+        cases.append(("issue-body", "issue", wrong_body, {}))
+        cases.append(("issue-number", "issue", self.issue_response(), {"number": 11}))
+        wrong_type = self.issue_response()
+        wrong_type["pull_request"] = {}
+        cases.append(("issue-type", "issue", wrong_type, {}))
+        wrong_parent = self.comment_response()
+        wrong_parent["issue_url"] = "https://api.github.com/repos/owner/repo/issues/11"
+        cases.append(("comment-parent", "comment", wrong_parent, {}))
+        wrong_head = self.pr_response()
+        wrong_head["head"]["sha"] = "c" * 40
+        cases.append(("pr-head", "pr", wrong_head, {}))
+        wrong_base = self.pr_response()
+        wrong_base["base"]["ref"] = "main"
+        cases.append(("pr-base", "pr", wrong_base, {}))
+        for name, kind, response, overrides in cases:
+            with self.subTest(name=name):
+                result = self.verify(kind, response, **overrides)
+                self.assertEqual(result["classification"], "conflict")
+                self.assertTrue(result["conflicts"])
+
+    def test_duplicate_markers_and_degraded_reads_never_prove_absence(self):
+        duplicate = self.issue_response()
+        duplicate["body"] = self.body + "\n" + self.body.split("\n", 1)[0]
+        self.assertEqual(
+            self.verify("issue", duplicate)["classification"], "conflict"
+        )
+
+        comment = self.comment_response()
+        comment["body"] = duplicate["body"]
+        with mock.patch.object(
+            reconcile_state, "gh", return_value=(True, [[comment]], "")
+        ):
+            matches, errors = reconcile_state.reconcile_comments(
+                "owner/repo", 10, self.marker
+            )
+        self.assertEqual(matches, [])
+        self.assertTrue(errors)
+        self.assertEqual(reconcile_state.classify(matches, errors), "unknown")
+
+        with mock.patch.object(
+            reconcile_state,
+            "gh",
+            return_value=(True, [[{"body": self.body}]], ""),
+        ):
+            matches, errors = reconcile_state.reconcile_comments(
+                "owner/repo", 10, self.marker
+            )
+        self.assertEqual(matches, [])
+        self.assertTrue(errors)
+        self.assertEqual(reconcile_state.classify(matches, errors), "unknown")
+
+        with mock.patch.object(
+            reconcile_state, "gh", return_value=(True, {"items": []}, "")
+        ):
+            matches, errors = reconcile_state.reconcile_bodies(
+                "owner/repo", "issue", self.marker
+            )
+        self.assertEqual(matches, [])
+        self.assertTrue(errors)
+        self.assertEqual(reconcile_state.classify(matches, errors), "unknown")
+
+    def test_multiple_parent_bound_marker_matches_are_conflict(self):
+        comments = [[
+            {"id": 1, "html_url": "https://example.test/1", "body": self.body},
+            {"id": 2, "html_url": "https://example.test/2", "body": self.body},
+        ]]
+        with mock.patch.object(
+            reconcile_state, "gh", return_value=(True, comments, "")
+        ):
+            matches, errors = reconcile_state.reconcile_comments(
+                "owner/repo", 10, self.marker
+            )
+        self.assertEqual(errors, [])
+        self.assertEqual(reconcile_state.classify(matches, errors), "conflict")
+
+    def test_ambiguous_comment_reconciliation_classifies_all_states(self):
+        one = {"id": 1, "html_url": "https://example.test/1", "body": self.body}
+        cases = (
+            (True, [[]], "", "absent"),
+            (True, [[one]], "", "present"),
+            (True, [[one, dict(one, id=2)]], "", "conflict"),
+            (False, None, "connection reset", "unknown"),
+        )
+        for ok, payload, error, expected in cases:
+            with self.subTest(expected=expected), mock.patch.object(
+                reconcile_state, "gh", return_value=(ok, payload, error)
+            ):
+                matches, errors = reconcile_state.reconcile_comments(
+                    "owner/repo", 10, self.marker
+                )
+                self.assertEqual(
+                    reconcile_state.classify(matches, errors), expected
+                )
+
+    def test_pr_reconciliation_is_bound_to_the_head_branch(self):
+        response = [{
+            "number": 20,
+            "state": "OPEN",
+            "url": "https://github.com/owner/repo/pull/20",
+            "headRefName": "agent/issue-10",
+            "headRefOid": "a" * 40,
+        }]
+        with mock.patch.object(
+            reconcile_state, "gh", return_value=(True, response, "")
+        ) as gh_mock:
+            matches, errors = reconcile_state.reconcile_pr_branch(
+                "owner/repo", "agent/issue-10"
+            )
+        gh_mock.assert_called_once_with([
+            "pr", "list", "--repo", "owner/repo", "--state", "all",
+            "--head", "agent/issue-10", "--json",
+            "number,state,url,headRefName,headRefOid",
+        ])
+        self.assertEqual(errors, [])
+        self.assertEqual(matches[0]["headRefOid"], "a" * 40)
 
     def test_issue_comment_uses_numbered_comments_endpoint_and_exact_marker(self):
         marker = "ghc:2:candidate:fe33b18"
@@ -1508,6 +1733,15 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertEqual(conflicts, [])
         self.assertEqual(errors, [])
+
+        response["ref"] = "refs/heads/other"
+        with mock.patch.object(reconcile_state, "gh", return_value=(True, response, "")):
+            matches, conflicts, errors = reconcile_state.reconcile_branch(
+                "owner/repo", "agent/issue-2-v1", expected
+            )
+        self.assertEqual(matches, [])
+        self.assertEqual(conflicts, [])
+        self.assertTrue(errors)
 
 
 class SkillPolicyTests(unittest.TestCase):
@@ -1599,6 +1833,30 @@ class SkillPolicyTests(unittest.TestCase):
             self.assertIn("Evidence identity", template)
             self.assertIn("Complexity reconciliation", template)
         self.assertIn("Invalidated evidence", checkpoint)
+
+    def test_write_verification_distinguishes_success_readback_and_ambiguity(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        policy = (ROOT / "references" / "policy-and-permissions.md").read_text(
+            encoding="utf-8"
+        )
+        recovery = (ROOT / "references" / "parallel-and-recovery.md").read_text(
+            encoding="utf-8"
+        )
+        delivery = (ROOT / "references" / "delivery-and-resume.md").read_text(
+            encoding="utf-8"
+        )
+        review = (ROOT / "references" / "pr-review-and-close.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("complete structured success response", skill)
+        self.assertIn("URL-only response is insufficient", skill)
+        self.assertIn("readback-required", policy)
+        self.assertIn("exact head/base refs and full SHAs", policy)
+        self.assertIn("helper is read-only", policy)
+        self.assertIn("normal write verification, not this recovery path", recovery)
+        self.assertIn("healthy authoritative empty result proves absence", recovery)
+        self.assertIn("preissued operation marker", delivery)
+        self.assertIn("sufficient structured response", review)
 
     def test_decomposition_keeps_integration_and_review_boundaries(self):
         reference = (

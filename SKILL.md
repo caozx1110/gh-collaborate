@@ -39,7 +39,7 @@ Infer the narrowest intent that satisfies the request. Read-only requests do not
 1. Confirm the GitHub host, authenticated actor, canonical `owner/repo`, fork/upstream relation, effective permission, default branch, exact baseline SHA, current branch, dirty state, and relevant repository policy.
 2. Use `git` for local state and `gh --json` or `gh api` for GitHub state. Pass `--repo owner/repo` explicitly. Do not scrape colored tables.
 3. Search for matching open Epics, Issues, PRs, and remote branches before creating anything.
-4. Preserve unknown values as unknown. Stop writes when authentication, repository identity, permission, or GitHub read-after-write reliability is uncertain.
+4. Preserve unknown values as unknown. Stop writes when authentication, repository identity, permission, or GitHub write-verification reliability is uncertain.
 
 Run `python scripts/inspect_repo.py --repo owner/repo` for a normalized read-only snapshot when useful. For sensitive repositories or content, follow `SECURITY.md`; never post secrets, private data, exploit details, or machine-local paths to public Issues or PRs.
 
@@ -67,9 +67,9 @@ Open a Draft PR while acceptance or gates remain incomplete; mark Ready only whe
 
 Stop at human review. Do not approve your own work, impersonate a reviewer, bypass protection, use `--admin`, or merge merely because checks are green. On a single-account repository, an Agent promise is not cryptographic separation; recommend a GitHub App or separate identity plus branch protection when strong enforcement is required.
 
-## Reconcile every write
+## Verify every write
 
-After creating or updating an Issue, comment, branch, or PR, re-read it and verify identity and content. If a request times out or returns an ambiguous error, do not retry blindly. Reconcile a comment with `--kind comment --number <issue-or-pr> --marker <value>` and a push with `--kind branch --branch <name> --expected-sha <full-sha>`, or perform equivalent read-only checks; then create only what is proven absent.
+Every Issue, comment, branch, or PR write must be verified. Validate a complete structured success response directly when it proves repository, object, parent/actor, content, URL, and head/base as applicable; a zero exit code or URL-only response is insufficient and requires one bounded readback. Always read the remote branch ref and compare its exact 40-character SHA after a push. Put a unique repository- and parent-bound operation marker in the original non-idempotent request. After timeout, interruption, connection failure, or 5xx, stop mutation retries and reconcile as `present`, `absent`, `conflict`, or `unknown`; create once only for proven `absent`.
 
 ## Preserve invariants
 
