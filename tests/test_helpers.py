@@ -26,6 +26,7 @@ render_work_item = load_script("render_work_item")
 validate_work_item = load_script("validate_work_item")
 inspect_repo = load_script("inspect_repo")
 reconcile_state = load_script("reconcile_state")
+validate_candidate_evidence = load_script("validate_candidate_evidence")
 
 
 FULL_SHA = "0123456789abcdef0123456789abcdef01234567"
@@ -48,6 +49,9 @@ def rendered_work_item(kind: str, **overrides: str) -> str:
             "VALIDATION": "unit tests passed",
             "BASE_EVIDENCE": f"main at {FULL_SHA}",
             "TESTS_AND_ACTIONS": "unit tests passed; Actions pending",
+            "EVIDENCE_IDENTITY": "head, base, commands, environment, dependencies, workflow, and rules recorded",
+            "INVALIDATED_EVIDENCE": "none",
+            "COMPLEXITY_RECONCILIATION": "declared and actual counts match",
             "RISK_CLASS": "ordinary",
             "RISK_TRIGGERS": "none",
             "COMPLEXITY_ESTIMATE": (
@@ -57,6 +61,41 @@ def rendered_work_item(kind: str, **overrides: str) -> str:
     )
     values.update({key.upper(): value for key, value in overrides.items()})
     return render_work_item.render(template, values)
+
+
+def candidate_evidence_document() -> dict[str, object]:
+    return {
+        "identity": {
+            "head_sha": FULL_SHA,
+            "base_sha": "a" * 40,
+            "review_head_sha": FULL_SHA,
+            "commands": ["python3 -m unittest discover -s tests -v"],
+            "environment": "Python 3.13 on Linux",
+            "dependencies": "standard library; no lockfile change",
+            "workflow": ".github/workflows/ci.yml at base SHA",
+            "rules": "applicable repository rules read at candidate time",
+            "scope": "accepted Issue outcome and exclusions at candidate time",
+        },
+        "complexity": {
+            "declared": {
+                "production_files": 2,
+                "net_production_lines": 80,
+                "new_primitives": [],
+            },
+            "actual": {
+                "production_files": 2,
+                "net_production_lines": 80,
+                "new_primitives": [],
+            },
+            "counting_method": "git diff --numstat base...head with protocol files counted",
+            "material_divergence": False,
+            "exclusions": ["tests", "generated files", "vendored code", "documentation"],
+            "budget_override": None,
+            "production_file_budget": 10,
+            "net_production_line_budget": 500,
+            "decision": None,
+        },
+    }
 
 
 def add_subsection(text: str, parent: str, title: str, content: str = "documented") -> str:
@@ -1161,6 +1200,221 @@ class ValidateTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0 if valid else 1)
 
 
+class CandidateEvidenceTests(unittest.TestCase):
+    def codes(self, document, root=ROOT, actual_head=FULL_SHA):
+        return {
+            item["code"]
+            for item in validate_candidate_evidence.validate(
+                document, Path(root), actual_head=actual_head
+            )
+        }
+
+    def test_unchanged_declared_and_actual_evidence_is_valid(self):
+        document = candidate_evidence_document()
+        self.assertEqual(self.codes(document), set())
+
+    def test_crossed_cap_requires_explicit_delivery_decision(self):
+        document = candidate_evidence_document()
+        document["complexity"]["actual"]["production_files"] = 11
+        self.assertIn("missing-drift-decision", self.codes(document))
+        document["complexity"]["decision"] = "continue"
+        self.assertEqual(self.codes(document), set())
+
+    def test_new_primitive_and_underestimated_size_invalidate_reconciliation(self):
+        document = candidate_evidence_document()
+        document["complexity"]["actual"].update(
+            {"net_production_lines": 81, "new_primitives": ["concurrency"]}
+        )
+        document["complexity"]["material_divergence"] = True
+        self.assertIn("missing-drift-decision", self.codes(document))
+        document["complexity"]["decision"] = "reduce"
+        self.assertEqual(self.codes(document), set())
+
+    def test_only_recorded_material_estimate_drift_requires_a_decision(self):
+        document = candidate_evidence_document()
+        document["complexity"]["actual"]["net_production_lines"] = 81
+        self.assertEqual(self.codes(document), set())
+        document["complexity"]["material_divergence"] = True
+        self.assertIn("missing-drift-decision", self.codes(document))
+        document["complexity"]["decision"] = "continue"
+        self.assertEqual(self.codes(document), set())
+
+    def test_changed_head_or_review_sha_is_stale(self):
+        document = candidate_evidence_document()
+        self.assertIn("stale-head", self.codes(document, actual_head="b" * 40))
+        document["identity"]["review_head_sha"] = "c" * 40
+        self.assertIn("stale-review", self.codes(document))
+
+    def test_invalidation_is_scoped_to_changed_inputs(self):
+        recorded = candidate_evidence_document()
+        self.assertEqual(
+            validate_candidate_evidence.invalidated_claims(
+                recorded, json.loads(json.dumps(recorded))
+            ),
+            set(),
+        )
+
+        base_changed = json.loads(json.dumps(recorded))
+        base_changed["identity"]["base_sha"] = "b" * 40
+        self.assertEqual(
+            validate_candidate_evidence.invalidated_claims(recorded, base_changed),
+            {"tested-merge-ci"},
+        )
+
+        head_changed = json.loads(json.dumps(recorded))
+        head_changed["identity"]["head_sha"] = "b" * 40
+        self.assertEqual(
+            validate_candidate_evidence.invalidated_claims(recorded, head_changed),
+            {
+                "stable-full-suite",
+                "complexity-reconciliation",
+                "implementation-review",
+                "branch-ci",
+                "tested-merge-ci",
+            },
+        )
+
+        workflow_changed = json.loads(json.dumps(recorded))
+        workflow_changed["identity"]["workflow"] = "new workflow"
+        self.assertEqual(
+            validate_candidate_evidence.invalidated_claims(
+                recorded, workflow_changed
+            ),
+            {"branch-ci", "tested-merge-ci"},
+        )
+
+        dependencies_changed = json.loads(json.dumps(recorded))
+        dependencies_changed["identity"]["dependencies"] = "new lockfile"
+        self.assertEqual(
+            validate_candidate_evidence.invalidated_claims(
+                recorded, dependencies_changed
+            ),
+            {
+                "stable-full-suite",
+                "complexity-reconciliation",
+                "branch-ci",
+                "tested-merge-ci",
+            },
+        )
+
+        rules_changed = json.loads(json.dumps(recorded))
+        rules_changed["identity"]["rules"] = "new required checks"
+        self.assertEqual(
+            validate_candidate_evidence.invalidated_claims(recorded, rules_changed),
+            {"branch-ci", "tested-merge-ci"},
+        )
+
+        environment_changed = json.loads(json.dumps(recorded))
+        environment_changed["identity"]["environment"] = "Python 3.14"
+        self.assertEqual(
+            validate_candidate_evidence.invalidated_claims(
+                recorded, environment_changed
+            ),
+            {"stable-full-suite"},
+        )
+
+        for field, value in (
+            ("scope", "expanded accepted scope"),
+            ("counting_method", "a different counting rule"),
+            ("budget_override", "policy.md#complexity"),
+        ):
+            current = json.loads(json.dumps(recorded))
+            container = current["identity"] if field == "scope" else current["complexity"]
+            container[field] = value
+            with self.subTest(field=field):
+                self.assertEqual(
+                    validate_candidate_evidence.invalidated_claims(recorded, current),
+                    {"complexity-reconciliation"},
+                )
+
+    def test_budget_override_must_be_tracked_and_supply_matching_caps(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            document = candidate_evidence_document()
+            complexity = document["complexity"]
+            complexity.update(
+                {
+                    "budget_override": "policy.md#complexity",
+                    "production_file_budget": 20,
+                    "net_production_line_budget": 1000,
+                }
+            )
+            self.assertIn("invalid-budget-policy", self.codes(document, root))
+
+            (root / "policy.md").write_text(
+                "## Complexity\n\nproduction file budget=20; "
+                "net production line budget=1000\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "policy.md"], cwd=root, check=True)
+            self.assertEqual(self.codes(document, root), set())
+            complexity["production_file_budget"] = 21
+            self.assertIn("budget-cap-mismatch", self.codes(document, root))
+
+    def test_repository_preflight_requires_clean_head_and_existing_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            tracked = root / "tracked.txt"
+            tracked.write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "-qm",
+                    "base",
+                ],
+                cwd=root,
+                check=True,
+            )
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            document = candidate_evidence_document()
+            document["identity"].update(
+                {"head_sha": head, "base_sha": head, "review_head_sha": head}
+            )
+            self.assertEqual(
+                validate_candidate_evidence.validate(document, root), []
+            )
+
+            tracked.write_text("dirty\n", encoding="utf-8")
+            self.assertIn(
+                "dirty-worktree",
+                {
+                    item["code"]
+                    for item in validate_candidate_evidence.validate(document, root)
+                },
+            )
+            subprocess.run(["git", "restore", "tracked.txt"], cwd=root, check=True)
+            document["identity"]["base_sha"] = "b" * 40
+            self.assertIn(
+                "missing-base",
+                {
+                    item["code"]
+                    for item in validate_candidate_evidence.validate(document, root)
+                },
+            )
+
+    def test_missing_identity_and_invalid_decision_are_rejected(self):
+        document = candidate_evidence_document()
+        document["identity"]["commands"] = []
+        document["complexity"]["decision"] = "ignore"
+        codes = self.codes(document)
+        self.assertIn("invalid-evidence", codes)
+        self.assertIn("invalid-drift-decision", codes)
+
+
 class InspectTests(unittest.TestCase):
     def test_unknown_github_state_stays_unknown(self):
         def fake_run(command, cwd):
@@ -1300,6 +1554,51 @@ class SkillPolicyTests(unittest.TestCase):
         self.assertIn("Ordinary work does not gain another GitHub write", complexity)
         self.assertIn("does not automatically split or terminate", complexity)
         self.assertIn("generated files, vendored code, tests, and documentation", complexity)
+
+    def test_validation_evidence_and_checkpoints_are_input_bound(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        delivery = (ROOT / "references" / "delivery-and-resume.md").read_text(
+            encoding="utf-8"
+        )
+        review = (ROOT / "references" / "pr-review-and-close.md").read_text(
+            encoding="utf-8"
+        )
+        checkpoint = (ROOT / "assets" / "templates" / "checkpoint.md").read_text(
+            encoding="utf-8"
+        )
+        pull_request = (
+            ROOT / "assets" / "templates" / "pull-request.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("targeted tests", skill)
+        for step in (
+            "targeted tests",
+            "full required suite",
+            "final candidate push",
+            "branch-head CI",
+            "tested-merge CI",
+            "post-merge smoke",
+        ):
+            self.assertIn(step, delivery)
+        for identity in (
+            "head SHA",
+            "base SHA",
+            "dependency or lockfile identity",
+            "workflow and rules identity",
+            "actual merge SHA",
+        ):
+            self.assertIn(identity, delivery)
+        self.assertIn("A base-only change preserves pure head evidence", delivery)
+        self.assertIn("scope, counting-rule, or budget-policy changes", delivery)
+        self.assertIn("native GitHub checks and reviews", delivery)
+        self.assertIn("there is no hard comment-count limit", delivery)
+        self.assertIn("does not add a reviewer", delivery)
+        self.assertIn("continue`, `reduce`, `split`, or `replace", delivery)
+        self.assertIn("not a native approval", review)
+        self.assertIn("changed head invalidates", review)
+        for template in (checkpoint, pull_request):
+            self.assertIn("Evidence identity", template)
+            self.assertIn("Complexity reconciliation", template)
+        self.assertIn("Invalidated evidence", checkpoint)
 
     def test_decomposition_keeps_integration_and_review_boundaries(self):
         reference = (
