@@ -35,9 +35,17 @@ Do not assume a specific design path, test command, label, branch prefix, merge 
 - Resolve the canonical repository once and pass `--repo owner/repo` on every `gh` call.
 - Prefer bounded JSON fields and stable API endpoints. Preserve raw IDs, URLs, and full SHAs for reconciliation.
 - Use body files or API JSON fields instead of interpolating untrusted text into a shell command.
-- Generate a unique marker such as `ghc:<issue>:<operation>:<random>` for a create/update that may need reconciliation.
-- Re-read after each write. Verify the returned object belongs to the intended repository and relates to the intended Issue/branch.
+- Put a unique marker such as `ghc:<parent>:<operation>:<random>` in the original Issue, comment, or PR create/update request. Use one exact standalone hidden comment and bind searches to the canonical repository and intended parent.
+- Verify every write. A complete structured success object may supply the evidence directly; a zero exit code, URL-only output, or object missing required identity requires one bounded readback.
 - Treat rate limits, timeouts, connection resets, 5xx responses, and interrupted commands as unknown outcomes until reconciled.
+
+## Write verification
+
+For an Issue, comment, or PR response or successful readback, require the canonical repository, object type and positive ID, authenticated actor from preflight, returned resource author, exact body or independently checkable summary, and remote URL. On create, author normally equals actor; on update, preserve and verify the existing author instead of mistaking it for the updater. Also require the intended Issue/PR number for an update, the parent number for a comment, and exact head/base refs and full SHAs for a PR. A missing field is `readback-required`; a present but mismatched repository, author, parent, body, type, or head/base is a conflict. Never treat an incomplete response as proof of success.
+
+A branch push is different: always read the remote ref and require equality with the expected 40-character SHA. A missing ref can prove absence only from a healthy authoritative read; the same branch name at another SHA is a conflict.
+
+Use `reconcile_state.verify_write_response` or equivalent local checks for a complete object. The helper is read-only: it verifies supplied JSON and performs bounded searches or GETs for reconciliation; it never creates, comments, updates, pushes, or merges. Write verification itself does not create another lifecycle stage or checkpoint.
 
 ## Sensitive material
 

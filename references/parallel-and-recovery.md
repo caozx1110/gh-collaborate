@@ -14,6 +14,8 @@ Treat an absent Agent, unknown local worktree, or stale comment as insufficient 
 
 ## Ambiguous API or push result
 
+A successful command with a complete structured object belongs to normal write verification, not this recovery path. If the success output is only a URL or lacks repository, object, parent/actor, content, or head/base identity, perform one bounded readback and verify that object. Enter ambiguous reconciliation only when the write outcome cannot be determined.
+
 After timeout, connection loss, interruption, or 5xx:
 
 1. Stop mutation retries.
@@ -21,9 +23,9 @@ After timeout, connection loss, interruption, or 5xx:
 3. Classify the result as `present`, `absent`, `conflict`, or `unknown`.
 4. Continue only for `present`; create once only for proven `absent`; stop for `conflict` or `unknown`.
 
-For a comment, bind reconciliation to the parent Issue/PR number and require an exact standalone operation marker. For a push, require the remote branch to equal the expected 40-character SHA; a same-name branch at another SHA is a conflict, not success.
+The unique operation marker must already be present in the original non-idempotent request; never add one only after failure. Bind a comment search to the canonical repository and parent Issue/PR number, require one exact standalone hidden marker, and treat duplicate bodies or multiple matching objects as conflict/unknown rather than absence. For a push, require the remote branch to equal the expected 40-character SHA; a same-name branch at another SHA is a conflict, not success.
 
-Do not infer absence from a single empty search when GitHub reads are degraded.
+Do not infer absence from malformed pagination, partial data, rate limiting, or any degraded GitHub read. Only a healthy authoritative empty result proves absence, and only that result permits one create attempt.
 
 ## High-risk escalation
 

@@ -38,7 +38,7 @@ Push a checkpoint only for handoff; a blocker; scope, acceptance, or budget drif
 - evidence identity, invalidated claims, and final complexity reconciliation when applicable;
 - blocker, if any;
 - next action;
-- operation marker when the write required reconciliation.
+- preissued operation marker and whether the write was verified from its response, a bounded readback, or ambiguous reconciliation.
 
 Do not report unpushed commits or a stash as shared progress. Do not force-push a checkpoint branch unless repository policy and an explicit human instruction authorize a safe replacement.
 
