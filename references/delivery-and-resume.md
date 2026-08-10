@@ -42,7 +42,7 @@ Push a checkpoint only for handoff; a blocker; scope, acceptance, or budget drif
 
 Do not report unpushed commits or a stash as shared progress. Do not force-push a checkpoint branch unless repository policy and an explicit human instruction authorize a safe replacement.
 
-The ordinary path does not add a reviewer, a GitHub write, or another full-suite run beyond the applicable ladder and repository rules.
+The ordinary path does not add a reviewer or GitHub write, load enhanced-only guidance, or prescribe a full-suite run beyond the applicable ladder and repository rules. Run broader controls only when current authority, repository policy, or concrete evidence requires them.
 
 ## Resume from remote truth
 

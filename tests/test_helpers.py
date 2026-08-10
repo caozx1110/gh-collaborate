@@ -1789,6 +1789,61 @@ class SkillPolicyTests(unittest.TestCase):
         self.assertIn("does not automatically split or terminate", complexity)
         self.assertIn("generated files, vendored code, tests, and documentation", complexity)
 
+    def test_ordinary_brevity_keeps_one_complete_schema_and_soft_limits(self):
+        skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
+        issue_reference = (ROOT / "references" / "issue-and-epic.md").read_text(
+            encoding="utf-8"
+        )
+        delivery = (ROOT / "references" / "delivery-and-resume.md").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(
+            r"### Keep ordinary Issues compact.*?```markdown\n(.*?)\n```",
+            issue_reference,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        compact_issue = match.group(1)
+        self.assertEqual(validate_work_item.validate("issue", compact_issue), [])
+        for heading in validate_work_item.SECTIONS["issue"]:
+            self.assertEqual(compact_issue.count(f"## {heading}"), 1)
+        for field in (
+            "Risk class",
+            "Risk triggers",
+            "Complexity estimate",
+            "Stage",
+            "Baseline",
+            "Last remote SHA",
+            "Blocker",
+            "Next action",
+        ):
+            self.assertRegex(compact_issue, rf"(?m)^- {re.escape(field)}: \S")
+        acceptance = compact_issue.split("## Acceptance checklist", 1)[1].split(
+            "## Test plan", 1
+        )[0]
+        test_plan = compact_issue.split("## Test plan", 1)[1].split("## State", 1)[0]
+        self.assertLessEqual(acceptance.count("- [ ]"), 3)
+        self.assertLessEqual(test_plan.count("- [ ]"), 2)
+        self.assertEqual(
+            list((ROOT / "assets" / "templates").glob("atomic-issue*.md")),
+            [ROOT / "assets" / "templates" / "atomic-issue.md"],
+        )
+
+        detailed = rendered_work_item(
+            "issue",
+            problem_and_evidence="One. Two. Three. Four.",
+            acceptance_checklist="\n".join(f"- [ ] Check {i}" for i in range(4)),
+            test_plan="\n".join(f"- [ ] Test {i}" for i in range(3)),
+        )
+        self.assertEqual(validate_work_item.validate("issue", detailed), [])
+        for text in (skill, issue_reference):
+            self.assertIn("one or two sentences", text)
+            self.assertIn("at most three", text)
+            self.assertIn("at most two", text)
+        self.assertIn("brevity defaults, not validator limits", issue_reference)
+        self.assertIn("enhanced-only", skill)
+        self.assertIn("enhanced-only", delivery)
+
     def test_validation_evidence_and_checkpoints_are_input_bound(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         delivery = (ROOT / "references" / "delivery-and-resume.md").read_text(

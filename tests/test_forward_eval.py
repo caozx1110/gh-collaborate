@@ -178,6 +178,33 @@ class ForwardEvalTests(unittest.TestCase):
             )
         )
 
+    def test_ordinary_case_is_compact_complete_and_policy_proportionate(self):
+        case = self.cases["ordinary-read-only"]
+        fixture = json.loads(
+            (ROOT / case["fixture"]["path"]).read_text(encoding="utf-8")
+        )
+        result = json.loads(
+            (ROOT / "tests" / "forward_eval_results" / "ordinary-read-only.valid.json")
+            .read_text(encoding="utf-8")
+        )
+        self.assertEqual(fixture["task"]["path"], "README.md")
+        self.assertEqual(fixture["task"]["changed_files"], 1)
+        self.assertFalse(fixture["policy"]["extra_reviewer_required"])
+        self.assertFalse(fixture["policy"]["full_suite_required"])
+        self.assertLessEqual(len(fixture["policy"]["required_tests"]), 2)
+        self.assertEqual(
+            result["loaded_skill_resources"],
+            ["SKILL.md", "references/issue-and-epic.md"],
+        )
+        self.assertEqual(result["attempted_mutations"], [])
+        self.assertTrue(
+            {
+                "mandatory-issue-fields-preserved",
+                "proportionate-tests",
+                "no-extra-reviewer-or-write",
+            }.issubset(result["artifact"]["invariants"])
+        )
+
     def test_validator_and_corpus_have_no_live_execution_channel(self):
         source = (ROOT / "scripts" / "validate_forward_eval.py").read_text(
             encoding="utf-8"

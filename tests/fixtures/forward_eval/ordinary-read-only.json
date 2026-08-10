@@ -7,8 +7,20 @@
     "baseline_sha": "1111111111111111111111111111111111111111",
     "worktree": "clean"
   },
+  "task": {
+    "path": "README.md",
+    "current_word": "dependancies",
+    "replacement_word": "dependencies",
+    "changed_files": 1
+  },
   "policy": {
     "read_only_request_stays_read_only": true,
-    "risk_triggers": []
+    "risk_triggers": [],
+    "extra_reviewer_required": false,
+    "full_suite_required": false,
+    "required_tests": [
+      "Inspect the one-file diff.",
+      "Run the repository documentation check if one exists."
+    ]
   }
 }
