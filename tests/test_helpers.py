@@ -133,12 +133,21 @@ class RenderTests(unittest.TestCase):
                 rendered = render_work_item.render(template, values)
                 self.assertTrue(reconcile_state.has_exact_marker(rendered, marker))
 
-                pages = [{"items": [{
+                item = {
                     "number": index,
-                    "html_url": f"https://example.test/issues/{index}",
+                    "html_url": f"https://github.com/owner/repo/issues/{index}",
                     "body": rendered,
-                }]}]
-                with mock.patch.object(reconcile_state, "gh", return_value=(True, pages, "")):
+                }
+                pages = [{
+                    "total_count": 1,
+                    "incomplete_results": False,
+                    "items": [item],
+                }]
+                with mock.patch.object(
+                    reconcile_state,
+                    "gh",
+                    side_effect=((True, pages, ""), (True, item, "")),
+                ):
                     matches, errors = reconcile_state.reconcile_bodies(
                         "owner/repo", "issue", marker
                     )
@@ -1502,6 +1511,22 @@ class ReconcileTests(unittest.TestCase):
             },
         }
 
+    def branch_response(self, branch, sha):
+        return {
+            "ref": f"refs/heads/{branch}",
+            "url": (
+                "https://api.github.com/repos/owner/repo/git/refs/heads/"
+                + branch
+            ),
+            "object": {
+                "type": "commit",
+                "sha": sha,
+                "url": (
+                    "https://api.github.com/repos/owner/repo/git/commits/" + sha
+                ),
+            },
+        }
+
     def verify(self, kind, response, **overrides):
         arguments = {
             "repo": "owner/repo",
@@ -1645,8 +1670,16 @@ class ReconcileTests(unittest.TestCase):
 
     def test_multiple_parent_bound_marker_matches_are_conflict(self):
         comments = [[
-            {"id": 1, "html_url": "https://example.test/1", "body": self.body},
-            {"id": 2, "html_url": "https://example.test/2", "body": self.body},
+            {
+                "id": 1,
+                "html_url": "https://github.com/owner/repo/issues/10#issuecomment-1",
+                "body": self.body,
+            },
+            {
+                "id": 2,
+                "html_url": "https://github.com/owner/repo/issues/10#issuecomment-2",
+                "body": self.body,
+            },
         ]]
         with mock.patch.object(
             reconcile_state, "gh", return_value=(True, comments, "")
@@ -1658,11 +1691,20 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(reconcile_state.classify(matches, errors), "conflict")
 
     def test_ambiguous_comment_reconciliation_classifies_all_states(self):
-        one = {"id": 1, "html_url": "https://example.test/1", "body": self.body}
+        one = {
+            "id": 1,
+            "html_url": "https://github.com/owner/repo/issues/10#issuecomment-1",
+            "body": self.body,
+        }
+        two = {
+            "id": 2,
+            "html_url": "https://github.com/owner/repo/issues/10#issuecomment-2",
+            "body": self.body,
+        }
         cases = (
             (True, [[]], "", "absent"),
             (True, [[one]], "", "present"),
-            (True, [[one, dict(one, id=2)]], "", "conflict"),
+            (True, [[one, two]], "", "conflict"),
             (False, None, "connection reset", "unknown"),
         )
         for ok, payload, error, expected in cases:
@@ -1683,26 +1725,67 @@ class ReconcileTests(unittest.TestCase):
             "url": "https://github.com/owner/repo/pull/20",
             "headRefName": "agent/issue-10",
             "headRefOid": "a" * 40,
+            "baseRefName": "development",
+            "baseRefOid": "b" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "headRepositoryOwner": {"login": "owner"},
+            "isCrossRepository": False,
         }]
+        exact = {
+            "number": 20,
+            "html_url": "https://github.com/owner/repo/pull/20",
+            "head": {
+                "ref": "agent/issue-10",
+                "sha": "a" * 40,
+                "repo": {"full_name": "owner/repo"},
+            },
+            "base": {
+                "ref": "development",
+                "sha": "b" * 40,
+                "repo": {"full_name": "owner/repo"},
+            },
+        }
         with mock.patch.object(
-            reconcile_state, "gh", return_value=(True, response, "")
+            reconcile_state,
+            "gh",
+            side_effect=((True, response, ""), (True, exact, "")),
         ) as gh_mock:
             matches, errors = reconcile_state.reconcile_pr_branch(
-                "owner/repo", "agent/issue-10"
+                "owner/repo",
+                "agent/issue-10",
+                "a" * 40,
+                "development",
+                "b" * 40,
             )
-        gh_mock.assert_called_once_with([
-            "pr", "list", "--repo", "owner/repo", "--state", "all",
-            "--head", "agent/issue-10", "--json",
-            "number,state,url,headRefName,headRefOid",
-        ])
+        self.assertEqual(gh_mock.call_count, 2)
+        self.assertEqual(
+            gh_mock.call_args_list[0],
+            mock.call([
+                "pr", "list", "--repo", "owner/repo", "--state", "all",
+                "--head", "agent/issue-10", "--json",
+                (
+                    "number,state,url,headRefName,headRefOid,baseRefName,"
+                    "baseRefOid,headRepository,headRepositoryOwner,"
+                    "isCrossRepository"
+                ),
+            ]),
+        )
         self.assertEqual(errors, [])
         self.assertEqual(matches[0]["headRefOid"], "a" * 40)
 
     def test_issue_comment_uses_numbered_comments_endpoint_and_exact_marker(self):
         marker = "ghc:2:candidate:fe33b18"
         comments = [[
-            {"id": 10, "html_url": "https://example.test/10", "body": f"<!-- operation-marker: {marker}:other -->"},
-            {"id": 11, "html_url": "https://example.test/11", "body": f"<!-- operation-marker: {marker} -->"},
+            {
+                "id": 10,
+                "html_url": "https://github.com/owner/repo/issues/2#issuecomment-10",
+                "body": f"<!-- operation-marker: {marker}:other -->",
+            },
+            {
+                "id": 11,
+                "html_url": "https://github.com/owner/repo/issues/2#issuecomment-11",
+                "body": f"<!-- operation-marker: {marker} -->",
+            },
         ]]
         with mock.patch.object(reconcile_state, "gh", return_value=(True, comments, "")) as gh_mock:
             matches, errors = reconcile_state.reconcile_comments("owner/repo", 2, marker)
@@ -1715,7 +1798,7 @@ class ReconcileTests(unittest.TestCase):
 
     def test_branch_requires_expected_sha_match(self):
         expected = "a" * 40
-        response = {"ref": "refs/heads/agent/issue-2-v1", "object": {"sha": "b" * 40}}
+        response = self.branch_response("agent/issue-2-v1", "b" * 40)
         with mock.patch.object(reconcile_state, "gh", return_value=(True, response, "")):
             matches, conflicts, errors = reconcile_state.reconcile_branch(
                 "owner/repo", "agent/issue-2-v1", expected
@@ -1725,7 +1808,7 @@ class ReconcileTests(unittest.TestCase):
         self.assertEqual(conflicts[0]["expected_sha"], expected)
         self.assertEqual(conflicts[0]["actual_sha"], "b" * 40)
 
-        response["object"]["sha"] = expected
+        response = self.branch_response("agent/issue-2-v1", expected)
         with mock.patch.object(reconcile_state, "gh", return_value=(True, response, "")):
             matches, conflicts, errors = reconcile_state.reconcile_branch(
                 "owner/repo", "agent/issue-2-v1", expected
